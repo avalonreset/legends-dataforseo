@@ -15,10 +15,11 @@ legends-dataforseo estimate maps --tasks 9 --depth 100
 legends-dataforseo serp "technical SEO" --location-code 2840
 legends-dataforseo demand "technical SEO" "local SEO"
 legends-dataforseo maps "coffee" --location-coordinate "40.7128,-74.0060,15z"
+legends-dataforseo business "cid:1234567890123456789" --location-code 2840
 ```
 
 Named request commands preview by default. The registry includes endpoint
-descriptions beyond the three named helpers; discovery is not a promise that
+descriptions beyond the four named helpers; discovery is not a promise that
 every route has its own command or has been live-tested.
 
 `docs search`, `docs index`, `docs sections`, and `docs read` discover official

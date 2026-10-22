@@ -178,6 +178,7 @@ def test_invalid_bounds_blocked_before_http(monkeypatch, options):
 
 @pytest.mark.parametrize("path", [PATH, "/v3" + PATH,
     "/serp/google/organic/task_get/advanced/id", "/serp/bing/organic/task_get/regular/id",
-    "/business_data/google/reviews/task_get/id"])
+    "/business_data/google/reviews/task_get/id",
+    "/business_data/google/my_business_info/task_get/id"])
 def test_known_paths(path):
     assert tasks.retrieval_path(path) == path.removeprefix("/v3")

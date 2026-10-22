@@ -9,7 +9,7 @@ an immutable Git commit, then import `legends_dataforseo`. Do not vendor a secon
 credential loader or HTTP implementation. Offline rendering, estimates, and
 fixture processing should remain available without a provider account.
 
-## legends-geogrid
+## legends-geogrid (and optional legends-jev OCR handoff)
 
 Lazy-import the transport only when the user executes a paid scan or retrieves
 an existing task. Preserve the consumer's budget and task-state checks.
@@ -23,11 +23,16 @@ def request_for_scan(path, payload=None, *, timeout=90):
 
 Use `/serp/google/maps/task_post` for standard queued scans and
 `/serp/google/maps/task_get/advanced/{id}` for results. Live scans use
-`/serp/google/maps/live/advanced`. Persist the task ID in the consumer so a
-pending response or timeout does not lead to another paid submission.
-The existing consumer must authorize execution and enforce its scan budget
-before calling this adapter. Optionally pass reviewed per-request estimate and
-ceiling. Fixture tests should mock HTTP and cover pending/empty/error statuses.
+`/serp/google/maps/live/advanced`. For Google Business Profile enrichment and
+title-stuffing inspection (`business_name_review.py`), use
+`/business_data/google/my_business_info/task_post` (`business-task-post`) and
+`/business_data/google/my_business_info/task_get/{id}` (`business-task-get`), or
+the live helper `business("cid:<id>", confirm=True, ...)`. Persist task IDs in
+the consumer so a pending response or timeout does not lead to another paid
+submission. When `legends-jev` (`>=0.2.0`) is also installed in the user's
+`cto-legends` ecosystem, `legends-geogrid` can optionally pass GBP profile
+imagery (`logo`, `main_image`) and multi-vantage Street View frames to
+`legends_jev.inspect_signage` for optical signage verification.
 
 ## legends-github
 

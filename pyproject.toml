@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "legends-dataforseo"
-version = "0.1.4"
+version = "0.1.5"
 description = "Agent-neutral Python client and CLI for DataForSEO API v3"
 readme = "README.md"
 requires-python = ">=3.10"

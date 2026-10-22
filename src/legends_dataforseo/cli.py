@@ -55,7 +55,7 @@ def main(argv=None) -> int:
     call.add_argument("--method", choices=["GET", "POST"], default=None)
     call.add_argument("--body-file", type=Path, help="UTF-8 JSON task array; do not include credentials")
     _execution_flags(call)
-    for name in ("serp", "maps", "demand"):
+    for name in ("serp", "maps", "demand", "business"):
         command = sub.add_parser(name, help="Preview a " + name + " task; --execute sends it")
         command.add_argument("keywords", nargs="+" if name == "demand" else 1)
         command.add_argument("--language-code", default="en")
@@ -63,7 +63,7 @@ def main(argv=None) -> int:
             command.add_argument("--location-coordinate", required=True)
         else:
             command.add_argument("--location-code", type=int, default=2840)
-        if name != "demand":
+        if name in ("serp", "maps"):
             command.add_argument("--depth", type=int, default=100 if name == "maps" else 10)
         _execution_flags(command)
     view = sub.add_parser("view", help="Inspect saved JSON locally without another API request")
@@ -160,6 +160,8 @@ def _run(args):
             task = {"language_code": args.language_code}
             if args.command == "demand":
                 task.update(keywords=args.keywords, location_code=args.location_code)
+            elif args.command == "business":
+                task.update(keyword=args.keywords[0], location_code=args.location_code)
             else:
                 task.update(keyword=args.keywords[0], depth=args.depth)
                 if args.command == "maps":

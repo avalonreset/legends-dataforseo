@@ -303,6 +303,16 @@ def maps(keyword: str, *, location_coordinate: str, language_code: str = "en",
                        "language_code": language_code, "depth": depth}], **request_options)
 
 
+def business(keyword: str, *, location_code: int = 2840, language_code: str = "en",
+             **request_options: Any) -> dict[str, Any]:
+    """One Google Business Profile live task (accepts 'cid:<id>', 'place_id:<id>', or query)."""
+    if not isinstance(keyword, str) or not keyword.strip():
+        raise RouteError("keyword must be a nonempty string.")
+    return api_request(route_for("business")["path"], [{"keyword": keyword,
+                       "location_code": location_code,
+                       "language_code": language_code}], **request_options)
+
+
 def total_cost(responses: list[dict[str, Any]]) -> float:
     return round(sum(float(item.get("cost") or 0) for item in responses), 6)
 

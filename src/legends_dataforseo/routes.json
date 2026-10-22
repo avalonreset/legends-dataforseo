@@ -1,6 +1,6 @@
 {
   "schema": "legends-dataforseo-routes/v1",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "routes": [
     {
       "name": "whoami",
@@ -268,6 +268,37 @@
         "item_usd": 0,
         "note": "Baseline estimate only; verify current pricing and request options."
       }
+    },
+    {
+      "name": "business-task-post",
+      "aliases": [
+        "google-profile-task-post"
+      ],
+      "kind": "api",
+      "method": "POST",
+      "path": "/business_data/google/my_business_info/task_post",
+      "family": "business-info",
+      "charged": true,
+      "summary": "Queue Google Business Profile info collection; returns task id",
+      "estimate": {
+        "base_usd": 0.0005,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "business-task-get",
+      "aliases": [
+        "google-profile-task-get"
+      ],
+      "kind": "api",
+      "method": "GET",
+      "path": "/business_data/google/my_business_info/task_get/{id}",
+      "family": "business-info",
+      "charged": false,
+      "summary": "Collect a completed Google Business Profile task by id",
+      "estimate": null
     },
     {
       "name": "reviews",

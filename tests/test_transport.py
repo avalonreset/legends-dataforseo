@@ -5,7 +5,7 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from legends_dataforseo import (API_ROOT, ApiError, CostLimitError, CredentialError,
-                               Credentials, RouteError, api_request, demand, maps, serp)
+                               Credentials, RouteError, api_request, business, demand, maps, serp)
 from legends_dataforseo import client
 
 AUTH = Credentials("fixture-login", "fixture-password")
@@ -162,9 +162,12 @@ def test_named_research_methods(monkeypatch):
     serp("example", **opts)
     demand(["one", "two"], **opts)
     maps("coffee", location_coordinate="40.7128,-74.0060,15z", **opts)
+    business("cid:3865327066180748277", **opts)
     assert calls[0][0].full_url.endswith("/serp/google/organic/live/advanced")
     assert json.loads(calls[1][0].data)[0]["keywords"] == ["one", "two"]
     assert json.loads(calls[2][0].data)[0]["location_coordinate"] == "40.7128,-74.0060,15z"
+    assert calls[3][0].full_url.endswith("/business_data/google/my_business_info/live")
+    assert json.loads(calls[3][0].data)[0]["keyword"] == "cid:3865327066180748277"
 
 
 def test_ledger_is_optional_redacts_task_ids_and_survives_disk_failure(monkeypatch, tmp_path):

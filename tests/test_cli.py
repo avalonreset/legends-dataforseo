@@ -6,11 +6,13 @@ from legends_dataforseo import cli
 
 
 @pytest.mark.parametrize("argv", [
-    ["routes"], ["route", "maps-task-post"], ["doctor"],
+    ["routes"], ["route", "maps-task-post"], ["route", "business-task-post"], ["doctor"],
     ["estimate", "maps", "--tasks", "9", "--depth", "100"],
-    ["serp", "example"], ["demand", "one", "two"],
+    ["estimate", "business-task-post", "--tasks", "10"],
+    ["serp", "example"], ["demand", "one", "two"], ["business", "cid:3865327066180748277"],
     ["maps", "coffee", "--location-coordinate", "40.7128,-74.0060,15z"],
     ["call", "/serp/google/maps/task_get/advanced/synthetic-id"],
+    ["call", "/business_data/google/my_business_info/task_get/synthetic-id"],
 ])
 def test_offline_cli_needs_no_credentials_or_network(capsys, argv):
     assert cli.main(argv) == 0

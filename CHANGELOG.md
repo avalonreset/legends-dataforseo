@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.5 - 2026-10-21
+
+- Add first-class `business()` Python helper and `legends-dataforseo business` CLI subcommand for Google Business Profile lookups (`cid:<id>`, `place_id:<id>`, or query).
+- Register queued Google Business Profile operations `business-task-post` (`/business_data/google/my_business_info/task_post`) and `business-task-get` (`/business_data/google/my_business_info/task_get/{id}`) in `routes.json` and `wait_task` retrieval validation for `legends-geogrid` business-name and profile audits.
+- Document cross-module integration between `legends-dataforseo`, `legends-geogrid`, and `legends-jev` optical signage verification in `docs/INTEGRATIONS.md`.
+
 ## 0.1.4 - 2026-10-03
 
 - Rename the repository, distribution and catalog identity to `legends-dataforseo`.

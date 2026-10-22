@@ -9,7 +9,7 @@ Windows PowerShell:
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.4/legends_dataforseo-0.1.4-py3-none-any.whl"
+.venv\Scripts\python.exe -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.5/legends_dataforseo-0.1.5-py3-none-any.whl"
 .venv\Scripts\python.exe -m legends_dataforseo doctor
 ```
 
@@ -17,7 +17,7 @@ macOS or Linux:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.4/legends_dataforseo-0.1.4-py3-none-any.whl"
+.venv/bin/python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.5/legends_dataforseo-0.1.5-py3-none-any.whl"
 .venv/bin/python -m legends_dataforseo doctor
 ```
 
@@ -33,7 +33,7 @@ ZIP and tar archives of the tagged repository. A source ZIP can be installed
 directly with pip; Git is not needed:
 
 ```sh
-python -m pip install "https://github.com/avalonreset/legends-dataforseo/archive/refs/tags/v0.1.4.zip"
+python -m pip install "https://github.com/avalonreset/legends-dataforseo/archive/refs/tags/v0.1.5.zip"
 ```
 
 For reproducible consumer dependencies, use the release's full commit in a
@@ -56,12 +56,12 @@ Download the wheel and `SHA256SUMS.txt` from the same release. Compare the wheel
 SHA-256 hash with its exact filename in the checksums file:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\legends_dataforseo-0.1.4-py3-none-any.whl
+Get-FileHash -Algorithm SHA256 .\legends_dataforseo-0.1.5-py3-none-any.whl
 ```
 
 ```sh
-sha256sum legends_dataforseo-0.1.4-py3-none-any.whl
-# macOS alternative: shasum -a 256 legends_dataforseo-0.1.4-py3-none-any.whl
+sha256sum legends_dataforseo-0.1.5-py3-none-any.whl
+# macOS alternative: shasum -a 256 legends_dataforseo-0.1.5-py3-none-any.whl
 ```
 
 Then install that local file with `python -m pip install ./<wheel-filename>`.
