@@ -20,7 +20,7 @@ Python 3.10+ · Windows, Linux, macOS · No runtime dependencies · MIT licensed
 
 ## Agent setup (via `cto-legends`)
 
-Part of the [CTO Legends](https://github.com/avalonreset/cto-legends) ecosystem. `cto-legends` is the only registered skill; this repo vendors a pinned copy at `skills/cto-legends/SKILL.md`.
+Part of the [cto-legends](https://github.com/avalonreset/cto-legends) ecosystem. `cto-legends` is the only registered skill; this repo vendors a pinned copy at `skills/cto-legends/SKILL.md`.
 
 The product, repository, Python distribution and catalog ID are `legends-dataforseo`.
 The former catalog name remains a compatibility alias for existing commands.
