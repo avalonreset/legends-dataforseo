@@ -1,0 +1,36 @@
+{
+  "template": "legends-type-v1",
+  "title": "legends-dataforseo",
+  "subtitle_lines": [
+    "high-throughput dataforseo python client",
+    "for serp, maps, gbp, and keyword research"
+  ],
+  "size": [
+    4096,
+    1024
+  ],
+  "text_bounds": [
+    [
+      192,
+      212,
+      2154,
+      386
+    ],
+    [
+      192,
+      534,
+      2752,
+      636
+    ],
+    [
+      192,
+      666,
+      2816,
+      768
+    ]
+  ],
+  "font_sha256": "3769f0f76477a7d9e2e6cb40422dedacb56c9ab1a6f7beee89b2b9ba6b8091ee",
+  "banner_sha256": "e0b01127c8b3eb7c79f06b100b4ee1268842b876daaa8dfb49106a3f6b7f00e6",
+  "output_dir": "C:\\Users\\rccol\\AppData\\Local\\Temp\\legends-banner-renders\\legends-dataforseo",
+  "published": false
+}

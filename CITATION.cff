@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+title: "legends-dataforseo"
+message: "If you use legends-dataforseo in your research or engineering workflows, please cite it using the metadata below."
+type: software
+authors:
+  - family-names: "Samar"
+    given-names: "Benjamin"
+    alias: "avalonreset"
+repository-code: "https://github.com/avalonreset/legends-dataforseo"
+url: "https://github.com/avalonreset/cto-legends"
+license: "MIT"
+version: "0.1.5"
+date-released: "2026-10-24"
+abstract: "Search, Google Maps, Google Business Profile, and keyword research through DataForSEO, with complete saved evidence, offline retrieval, integrity verification and explicit reuse checks."

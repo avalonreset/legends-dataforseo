@@ -1,7 +1,7 @@
 <a name="banner"></a>
 <a name="legends-dataforseo"></a>
 
-# legends-dataforseo
+# ![legends-dataforseo](assets/banner.webp)
 
 [![release](https://img.shields.io/github/v/release/avalonreset/legends-dataforseo?label=release&sort=date&style=flat-square&labelColor=000000&color=ff0000)](https://github.com/avalonreset/legends-dataforseo/releases/latest)
 [![checks](https://img.shields.io/github/actions/workflow/status/avalonreset/legends-dataforseo/ci.yml?branch=main&label=checks&style=flat-square&labelColor=000000)](https://github.com/avalonreset/legends-dataforseo/actions/workflows/ci.yml)
@@ -207,6 +207,27 @@ For an agent-assisted install, ask your agent to read this repository's
 offline doctor, and preview your intended request. Give it a budget before paid
 execution. The portable instruction files work with file-and-command-capable
 agents; no separate model subscription is required by the kit.
+
+## Architecture and how it works
+
+```text
+Caller (CLI or Python)
+  -> Route registry & offline preview / cost ceiling check
+  -> DataForSEO API v3 HTTPS transport (single request, no blind retries)
+  -> Complete JSON envelope + optional research-memory bank (`evidence`)
+```
+
+- `legends_dataforseo/`: Core transport, route catalog, cost guardrails, and CLI entry points.
+- `docs/`: API reference, CLI guide, discovery workflow, research memory, and [search strategy](docs/SEARCH-STRATEGY.md).
+- `skills/cto-legends/SKILL.md`: Pinned copy of the central [`cto-legends`](https://github.com/avalonreset/cto-legends) router skill.
+
+## FAQ
+
+**Does `legends-dataforseo` make paid API calls by default?**
+No. Named CLI commands (`serp`, `maps`, `business`, `demand`) preview the request payload offline by default. Paid execution requires `--execute`, `--estimated-cost-usd`, and `--max-cost-usd` on the CLI, or `confirm=True` in Python.
+
+**Do I need DataForSEO credentials to explore routes or run tests?**
+No. Route discovery (`routes`, `route`, `estimate`), offline previews, and the test suite run locally without credentials.
 
 ## Support and contributions
 
