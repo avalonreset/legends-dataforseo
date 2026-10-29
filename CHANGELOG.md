@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6 - 2026-10-29
+
+- Raise minimum supported Python runtime to Python 3.11 (`requires-python = ">=3.11"`) across package metadata, documentation, and multi-OS CI.
+- Harden GitHub Actions workflows with 40-character commit SHA action pins and upgrade `pip>=26.2.2` before package installation.
+
 ## 0.1.5 - 2026-10-21
 
 - Add first-class `business()` Python helper and `legends-dataforseo business` CLI subcommand for Google Business Profile lookups (`cid:<id>`, `place_id:<id>`, or query).

@@ -11,7 +11,7 @@ listed workflows, not every DataForSEO product or an unlimited production load.
 - 21 consumer tests passed against the candidate package across GeoGrid transport
   and GitHub research tests, including real-package transport fixtures.
 - CI runs the suite and package build on Windows, Linux, and macOS with Python
-  3.10 and 3.13. The release process requires every job to pass.
+  3.11 and 3.13. The release process requires every job to pass.
 - Release checks include wheel/sdist metadata, private-artifact scanning, clean
   installed-wheel API/CLI smoke checks, and uploaded asset checksums.
 

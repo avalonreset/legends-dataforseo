@@ -5,7 +5,7 @@ issue for a substantial API or routing change so the scope can be discussed.
 
 ## Work locally
 
-Use Python 3.10 or newer and a virtual environment, then run from the repository:
+Use Python 3.11 or newer and a virtual environment, then run from the repository:
 
 ```sh
 python -m pip install -e ".[dev]"
@@ -28,7 +28,7 @@ explicit budget and keep its responses private.
 - Never automatically retry a paid submission or switch accounts.
 - Reject unconfirmed paid requests before HTTP and preserve the caller's budget checks.
 - Keep secrets out of arguments, output, fixtures, commits, and issue reports.
-- Use synthetic HTTP fixtures for regression tests and maintain Python 3.10 compatibility.
+- Use synthetic HTTP fixtures for regression tests and maintain Python 3.11 compatibility.
 - Document behavior changes in [CHANGELOG.md](CHANGELOG.md) and [docs/API.md](docs/API.md).
 
 Keep a pull request focused. Explain the user-visible result and relevant checks.

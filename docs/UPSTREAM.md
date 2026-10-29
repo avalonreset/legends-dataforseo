@@ -24,7 +24,7 @@ and [the reviewed package manifest](https://github.com/dataforseo/mcp-server-typ
 
 | Capability | legends-dataforseo |
 | --- | --- |
-| Runtime and embedding | Python 3.10+, no runtime dependencies, Python functions and CLI |
+| Runtime and embedding | Python 3.11+, no runtime dependencies, Python functions and CLI |
 | Documentation | Official index discovery, local index search, Markdown reads, explicit offline cache |
 | API responses | Original Python task envelopes; optional CLI summary, field selection, display limits, and full-response files |
 | `.ai` endpoints | Explicit `.ai` request paths accepted; standard response paths remain the default |

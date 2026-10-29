@@ -13,7 +13,7 @@ DataForSEO API v3 with offline request previews and explicit paid execution.
 Find official endpoint docs, save complete responses, inspect focused results,
 and resume queued tasks without submitting them again.
 
-Python 3.10+ · Windows, Linux, macOS · No runtime dependencies · MIT licensed
+Python 3.11+ · Windows, Linux, macOS · No runtime dependencies · MIT licensed
 
 [Quick start](#quick-start) · [Python API](docs/API.md) · [CLI guide](docs/CLI.md) ·
 [Agent setup](#agent-setup-via-cto-legends) · [Releases](https://github.com/avalonreset/legends-dataforseo/releases)
@@ -49,7 +49,7 @@ No MCP server or particular agent runtime is required.
 ## Install
 
 ```sh
-python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.5/legends_dataforseo-0.1.5-py3-none-any.whl"
+python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.6/legends_dataforseo-0.1.6-py3-none-any.whl"
 legends-dataforseo --version
 legends-dataforseo doctor
 ```
