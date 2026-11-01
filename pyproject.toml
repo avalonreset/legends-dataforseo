@@ -34,7 +34,7 @@ Releases = "https://github.com/avalonreset/legends-dataforseo/releases"
 legends-dataforseo = "legends_dataforseo.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8,<9", "build>=1,<2", "twine>=6,<7"]
+dev = ["pytest>=8,<10", "build>=1,<2", "twine>=6,<8"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
