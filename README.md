@@ -242,3 +242,10 @@ that integrations rely on. For credential leaks or vulnerabilities, use
 MIT licensed. [Provenance](docs/PROVENANCE.md). Independent project; not an
 official DataForSEO SDK. The license covers this code, not the provider service,
 data, or trademarks.
+
+---
+
+**Specification & benchmarks on cto-legends.com:**
+- **Module specification & architecture matrix:** [cto-legends.com/modules/legends-dataforseo](https://cto-legends.com/modules/legends-dataforseo)
+- **Related engineering dispatches:** [How to Build AI Agents: Production CLI & MCP Routing](https://cto-legends.com/blog?post=how-to-build-ai-agents-cli-mcp-routing) · [Claude Code Skills: MCP vs CLI Workflow Architecture](https://cto-legends.com/blog?post=claude-code-skills-mcp-vs-cli-workflow) · [Obsidian Second Brain: Markdown Knowledge Base Guide](https://cto-legends.com/blog?post=obsidian-second-brain-markdown-knowledge-base)
+- **Ecosystem hub:** [cto-legends.com/home](https://cto-legends.com/home)
