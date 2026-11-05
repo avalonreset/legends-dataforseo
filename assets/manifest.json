@@ -1,0 +1,31 @@
+{
+  "product": "legends-dataforseo",
+  "banner_template": "legends-type-v1",
+  "social_template": "legends-social-v1",
+  "subtitle": "high-throughput dataforseo python client for serp, maps, gbp, and keyword research",
+  "font": "Legends Regular",
+  "font_sha256": "3769f0f76477a7d9e2e6cb40422dedacb56c9ab1a6f7beee89b2b9ba6b8091ee",
+  "font_redistributed": false,
+  "files": [
+    {
+      "name": "banner.png",
+      "bytes": 77579,
+      "sha256": "2144c1cb3839542fa7a4b69d1095c9d46003e9f284d91a36957173b51a536aa7"
+    },
+    {
+      "name": "banner.webp",
+      "bytes": 30476,
+      "sha256": "e0b01127c8b3eb7c79f06b100b4ee1268842b876daaa8dfb49106a3f6b7f00e6"
+    },
+    {
+      "name": "preview.png",
+      "bytes": 29729,
+      "sha256": "f04dda421ced6a4118d58dd86550b022b4f1d65197662d8cbcfd2e11a8a1e847"
+    },
+    {
+      "name": "social-preview.png",
+      "bytes": 424309,
+      "sha256": "346c64ad35eeee527dcc471f828e3e1645e77128fc5a828db07cb3d4fdd317cd"
+    }
+  ]
+}

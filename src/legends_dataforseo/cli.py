@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from contextlib import nullcontext
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -142,8 +143,26 @@ def _run(args):
     elif args.command == "estimate":
         result = estimate_cost(args.operation, tasks=args.tasks, depth=args.depth, items=args.items)
     elif args.command == "doctor":
-        result = {"version": __version__, "routes": len(load_routes()["routes"]),
-                  "credentials": credential_status(), "live": False}
+        creds = credential_status()
+        login_set = bool(
+            os.environ.get("DATAFORSEO_LOGIN")
+            or os.environ.get("DATAFORSEO_USERNAME")
+            or creds.get("present")
+        )
+        password_set = bool(
+            os.environ.get("DATAFORSEO_PASSWORD")
+            or creds.get("present")
+        )
+        result = {
+            "status": "ok",
+            "python": sys.version.split()[0],
+            "version": __version__,
+            "routes": len(load_routes()["routes"]),
+            "credentials": creds,
+            "dataforseo_login_configured": login_set,
+            "dataforseo_password_configured": password_set,
+            "live": False,
+        }
         if args.live:
             response = api_request("/appendix/user_data")
             statuses = [t.get("status_code") for t in response.get("tasks") or []]

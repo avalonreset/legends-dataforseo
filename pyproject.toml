@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "legends-dataforseo"
-version = "0.1.7"
+version = "0.1.8"
 description = "Agent-neutral Python client and CLI for DataForSEO API v3"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,5 +43,6 @@ where = ["src"]
 legends_dataforseo = ["routes.json", "py.typed"]
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"

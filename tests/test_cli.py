@@ -1,4 +1,10 @@
 import json
+from pathlib import Path
+import sys
+
+SRC = str(Path(__file__).resolve().parents[1] / "src")
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
 
 import pytest
 from legends_dataforseo import __version__, estimate_cost, route_for
@@ -53,3 +59,57 @@ def test_registry_estimates_and_version():
     assert estimate_cost("maps", tasks=9, depth=100)["estimated_cost_usd"] == 0.018
     assert estimate_cost("maps-task-post")["estimated_cost_usd"] is None
     assert estimate_cost("status")["estimated_cost_usd"] == 0
+
+
+def test_doctor_reports_readiness_and_env_presence(monkeypatch, capsys):
+    assert cli.main(["doctor"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "ok"
+    assert payload["version"] == __version__
+    assert isinstance(payload["python"], str) and payload["python"]
+    assert payload["dataforseo_login_configured"] is False
+    assert payload["dataforseo_password_configured"] is False
+    monkeypatch.setenv("DATAFORSEO_LOGIN", "fixture-login")
+    monkeypatch.setenv("DATAFORSEO_PASSWORD", "fixture-secret")
+    assert cli.main(["doctor"]) == 0
+    configured = json.loads(capsys.readouterr().out)
+    assert configured["dataforseo_login_configured"] is True
+    assert configured["dataforseo_password_configured"] is True
+    assert configured["credentials"] == {"present": True, "source": "process-env"}
+
+
+import contextlib
+import io
+import os
+import unittest
+from unittest.mock import patch
+from legends_dataforseo import client
+
+
+class DoctorUnittestSuite(unittest.TestCase):
+    def test_doctor_offline_readiness_and_credentials(self):
+        with patch.dict(os.environ, {}, clear=False), patch.object(
+            client, "_windows_user_environment", return_value=None
+        ):
+            for key in ("DATAFORSEO_LOGIN", "DATAFORSEO_USERNAME", "DATAFORSEO_PASSWORD"):
+                os.environ.pop(key, None)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = cli.main(["doctor"])
+            self.assertEqual(rc, 0)
+            data = json.loads(buf.getvalue())
+            self.assertEqual(data["status"], "ok")
+            self.assertEqual(data["version"], __version__)
+            self.assertFalse(data["dataforseo_login_configured"])
+            self.assertFalse(data["dataforseo_password_configured"])
+
+            os.environ["DATAFORSEO_LOGIN"] = "fixture-login"
+            os.environ["DATAFORSEO_PASSWORD"] = "fixture-secret"
+            buf2 = io.StringIO()
+            with contextlib.redirect_stdout(buf2):
+                rc2 = cli.main(["doctor"])
+            self.assertEqual(rc2, 0)
+            data2 = json.loads(buf2.getvalue())
+            self.assertTrue(data2["dataforseo_login_configured"])
+            self.assertTrue(data2["dataforseo_password_configured"])
+

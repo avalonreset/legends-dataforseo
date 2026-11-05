@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8 - 2026-11-05
+
+- Add `docs/AGENT-RECIPE.md` with complete CLI/Python workflow reference and Windows Defender, EDR, and anti-ransomware guardrails, and expand `AGENTS.md` with explicit EDR security guardrails.
+- Add `THIRD_PARTY_NOTICES.md`, `assets/manifest.json`, and `scripts/check_release.py` Gold Standard offline release verification gate (EDR forbidden regexes, forbidden file extensions, PNG/WebP authoring metadata checks, relative link verification, dash checks, and version parity).
+- Expand `legends-dataforseo doctor` (`python -m legends_dataforseo doctor`) to report Python runtime version and explicit `dataforseo_login_configured` / `dataforseo_password_configured` boolean readiness fields alongside route count and credential source.
+
 ## 0.1.7 - 2026-11-04
 
 - Align `business()` in `src/legends_dataforseo/client.py` and `docs/API.md` so callers can pass either `keyword` (positional or keyword) or `target` (keyword alias) along with optional `location_code`, `location_name`, `location_coordinate`, and `tag`.
