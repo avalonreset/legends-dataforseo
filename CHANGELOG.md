@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.7 - 2026-11-04
+
+- Align `business()` in `src/legends_dataforseo/client.py` and `docs/API.md` so callers can pass either `keyword` (positional or keyword) or `target` (keyword alias) along with optional `location_code`, `location_name`, `location_coordinate`, and `tag`.
+
 ## 0.1.6 - 2026-10-29
 
 - Raise minimum supported Python runtime to Python 3.11 (`requires-python = ">=3.11"`) across package metadata, documentation, and multi-OS CI.

@@ -16,7 +16,7 @@ demand(keywords, *, location_code=2840, language_code="en",
        **request_options) -> dict
 maps(keyword, *, location_coordinate, language_code="en", depth=100,
      **request_options) -> dict
-business(target, *, location_code=None, location_name=None,
+business(keyword=None, *, target=None, location_code=2840, location_name=None,
          location_coordinate=None, language_code="en", tag=None,
          **request_options) -> dict
 ```

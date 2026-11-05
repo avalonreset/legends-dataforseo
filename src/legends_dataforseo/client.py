@@ -303,14 +303,33 @@ def maps(keyword: str, *, location_coordinate: str, language_code: str = "en",
                        "language_code": language_code, "depth": depth}], **request_options)
 
 
-def business(keyword: str, *, location_code: int = 2840, language_code: str = "en",
-             **request_options: Any) -> dict[str, Any]:
+def business(
+    keyword: str | None = None,
+    *,
+    target: str | None = None,
+    location_code: int | None = 2840,
+    location_name: str | None = None,
+    location_coordinate: str | None = None,
+    language_code: str = "en",
+    tag: str | None = None,
+    **request_options: Any,
+) -> dict[str, Any]:
     """One Google Business Profile live task (accepts 'cid:<id>', 'place_id:<id>', or query)."""
-    if not isinstance(keyword, str) or not keyword.strip():
+    if keyword is not None and target is not None:
+        raise RouteError("Specify either keyword or target, not both.")
+    query = target if keyword is None else keyword
+    if not isinstance(query, str) or not query.strip():
         raise RouteError("keyword must be a nonempty string.")
-    return api_request(route_for("business")["path"], [{"keyword": keyword,
-                       "location_code": location_code,
-                       "language_code": language_code}], **request_options)
+    task: dict[str, Any] = {"keyword": query, "language_code": language_code}
+    if location_coordinate is not None:
+        task["location_coordinate"] = location_coordinate
+    elif location_name is not None:
+        task["location_name"] = location_name
+    elif location_code is not None:
+        task["location_code"] = location_code
+    if tag is not None:
+        task["tag"] = tag
+    return api_request(route_for("business")["path"], [task], **request_options)
 
 
 def total_cost(responses: list[dict[str, Any]]) -> float:

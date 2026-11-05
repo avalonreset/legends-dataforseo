@@ -163,11 +163,18 @@ def test_named_research_methods(monkeypatch):
     demand(["one", "two"], **opts)
     maps("coffee", location_coordinate="40.7128,-74.0060,15z", **opts)
     business("cid:3865327066180748277", **opts)
+    business(target="place_id:ChIJ123", location_coordinate="40.7128,-74.0060,15z", tag="audit-1", **opts)
     assert calls[0][0].full_url.endswith("/serp/google/organic/live/advanced")
     assert json.loads(calls[1][0].data)[0]["keywords"] == ["one", "two"]
     assert json.loads(calls[2][0].data)[0]["location_coordinate"] == "40.7128,-74.0060,15z"
     assert calls[3][0].full_url.endswith("/business_data/google/my_business_info/live")
     assert json.loads(calls[3][0].data)[0]["keyword"] == "cid:3865327066180748277"
+    assert json.loads(calls[4][0].data)[0] == {
+        "keyword": "place_id:ChIJ123",
+        "language_code": "en",
+        "location_coordinate": "40.7128,-74.0060,15z",
+        "tag": "audit-1",
+    }
 
 
 def test_ledger_is_optional_redacts_task_ids_and_survives_disk_failure(monkeypatch, tmp_path):
