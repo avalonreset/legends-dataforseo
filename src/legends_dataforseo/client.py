@@ -275,15 +275,133 @@ def api_request(
                 pass
     if result.get("status_code") != 20000:
         raise ApiError("DataForSEO rejected the response envelope; inspect ApiError.response.", response=result)
+    if standard_path.startswith("/serp/google/organic/"):
+        from .serp_integrity import normalize_serp_envelope
+        normalize_serp_envelope(result, endpoint=standard_path)
     return result
 
 
-def serp(keyword: str, *, location_code: int = 2840, language_code: str = "en",
-         depth: int = 10, **request_options: Any) -> dict[str, Any]:
-    """One Google organic live task; request_options are api_request keywords."""
-    return api_request(route_for("serp")["path"], [{"keyword": keyword,
-                       "location_code": location_code, "language_code": language_code,
-                       "depth": depth}], **request_options)
+def _serp_is_suspect_poisoned(envelope: dict[str, Any]) -> bool:
+    for task in envelope.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        for res_obj in task.get("result") or []:
+            if isinstance(res_obj, dict):
+                integrity = res_obj.get("serp_integrity")
+                if isinstance(integrity, dict) and integrity.get("status") == "suspect_poisoned":
+                    return True
+    return False
+
+
+def _attach_serp_retry_metadata(
+    envelope: dict[str, Any],
+    *,
+    retry_attempts: int,
+    attempt_task_ids: list[str],
+    labs_competitors_items: list[dict[str, Any]] | None = None,
+) -> None:
+    for task in envelope.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        for res_obj in task.get("result") or []:
+            if not isinstance(res_obj, dict):
+                continue
+            integrity = res_obj.get("serp_integrity")
+            if isinstance(integrity, dict):
+                integrity["retry_attempts"] = retry_attempts
+                integrity["attempt_task_ids"] = list(attempt_task_ids)
+            if labs_competitors_items is not None:
+                res_obj["labs_competitors"] = labs_competitors_items
+
+
+def serp(
+    keyword: str,
+    *,
+    location_code: int | None = 2840,
+    location_name: str | None = None,
+    location_coordinate: str | None = None,
+    language_code: str = "en",
+    depth: int = 10,
+    device: str | None = None,
+    os: str | None = None,
+    max_poison_retries: int = 2,
+    labs_fallback: bool = False,
+    **request_options: Any,
+) -> dict[str, Any]:
+    """One Google organic live task with automatic /goto unmasking and poison retry."""
+    if type(max_poison_retries) is not int or max_poison_retries < 0:
+        raise ValueError("max_poison_retries must be a nonnegative integer")
+    task: dict[str, Any] = {"keyword": keyword}
+    if location_coordinate is not None:
+        task["location_coordinate"] = location_coordinate
+    elif location_name is not None:
+        task["location_name"] = location_name
+    else:
+        task["location_code"] = 2840 if location_code is None else location_code
+    task["language_code"] = language_code
+    task["depth"] = depth
+    if device is not None:
+        task["device"] = device
+    if os is not None:
+        task["os"] = os
+
+    path = route_for("serp")["path"]
+    result = api_request(path, [task], **request_options)
+
+    attempt_ids = [
+        str(t["id"])
+        for t in (result.get("tasks") or [])
+        if isinstance(t, dict) and t.get("id")
+    ]
+    retries_used = 0
+    while _serp_is_suspect_poisoned(result) and retries_used < max_poison_retries:
+        retries_used += 1
+        retry_task = dict(task)
+        if "location_coordinate" in retry_task:
+            retry_task.pop("location_coordinate", None)
+            if location_name is not None:
+                retry_task["location_name"] = location_name
+            else:
+                retry_task["location_code"] = 2840 if location_code is None else location_code
+        result = api_request(path, [retry_task], **request_options)
+        for t in result.get("tasks") or []:
+            if isinstance(t, dict) and t.get("id"):
+                attempt_ids.append(str(t["id"]))
+
+    labs_items: list[dict[str, Any]] | None = None
+    if labs_fallback and (
+        _serp_is_suspect_poisoned(result)
+        or any(
+            isinstance(r, dict) and (r.get("serp_integrity") or {}).get("goto_wrapped_count", 0) > 0
+            for t in (result.get("tasks") or [])
+            if isinstance(t, dict)
+            for r in (t.get("result") or [])
+        )
+    ):
+        labs_opts = dict(request_options)
+        if labs_opts.get("max_cost_usd") is not None and labs_opts.get("estimated_cost_usd") is not None:
+            labs_opts["estimated_cost_usd"] = min(float(labs_opts["max_cost_usd"]), 0.015)
+        comp_resp = competitors(
+            [keyword],
+            location_code=2840 if location_code is None else location_code,
+            language_code=language_code,
+            **labs_opts,
+        )
+        labs_items = []
+        for t in comp_resp.get("tasks") or []:
+            if isinstance(t, dict):
+                for r in t.get("result") or []:
+                    if isinstance(r, dict) and isinstance(r.get("items"), list):
+                        labs_items.extend(i for i in r["items"] if isinstance(i, dict))
+
+    if retries_used > 0 or labs_items is not None:
+        _attach_serp_retry_metadata(
+            result,
+            retry_attempts=retries_used,
+            attempt_task_ids=attempt_ids,
+            labs_competitors_items=labs_items,
+        )
+    return result
 
 
 def demand(keywords: list[str], *, location_code: int = 2840,
@@ -293,6 +411,77 @@ def demand(keywords: list[str], *, location_code: int = 2840,
         raise RouteError("keywords must be a nonempty list of strings.")
     return api_request(route_for("demand")["path"], [{"keywords": keywords,
                        "location_code": location_code, "language_code": language_code}], **request_options)
+
+
+def competitors(
+    keywords: list[str],
+    *,
+    location_code: int = 2840,
+    language_code: str = "en",
+    limit: int = 20,
+    **request_options: Any,
+) -> dict[str, Any]:
+    """One DataForSEO Labs SERP competitors live task across a keyword list."""
+    if not isinstance(keywords, list) or not keywords or any(not isinstance(k, str) or not k for k in keywords):
+        raise RouteError("keywords must be a nonempty list of strings.")
+    if type(limit) is not int or limit < 1 or limit > 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    return api_request(
+        route_for("competitors")["path"],
+        [{"keywords": keywords, "location_code": location_code, "language_code": language_code, "limit": limit}],
+        **request_options,
+    )
+
+
+def _normalize_target_domain(target: str) -> str:
+    if not isinstance(target, str) or not target.strip():
+        raise RouteError("target domain must be a nonempty string.")
+    cleaned = target.strip()
+    if "://" in cleaned:
+        from urllib.parse import urlparse
+        cleaned = (urlparse(cleaned).hostname or "").strip()
+    cleaned = cleaned.split("/", 1)[0].strip().lower().rstrip(".").removeprefix("www.")
+    if not cleaned or "." not in cleaned:
+        raise RouteError("target must be a valid domain name.")
+    return cleaned
+
+
+def ranked_keywords(
+    target: str,
+    *,
+    location_code: int = 2840,
+    language_code: str = "en",
+    limit: int = 100,
+    **request_options: Any,
+) -> dict[str, Any]:
+    """One DataForSEO Labs ranked keywords live task for a target domain."""
+    domain = _normalize_target_domain(target)
+    if type(limit) is not int or limit < 1 or limit > 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    return api_request(
+        route_for("ranked-keywords")["path"],
+        [{"target": domain, "location_code": location_code, "language_code": language_code, "limit": limit}],
+        **request_options,
+    )
+
+
+def relevant_pages(
+    target: str,
+    *,
+    location_code: int = 2840,
+    language_code: str = "en",
+    limit: int = 100,
+    **request_options: Any,
+) -> dict[str, Any]:
+    """One DataForSEO Labs relevant pages live task for a target domain."""
+    domain = _normalize_target_domain(target)
+    if type(limit) is not int or limit < 1 or limit > 1000:
+        raise ValueError("limit must be an integer between 1 and 1000")
+    return api_request(
+        route_for("relevant-pages")["path"],
+        [{"target": domain, "location_code": location_code, "language_code": language_code, "limit": limit}],
+        **request_options,
+    )
 
 
 def maps(keyword: str, *, location_coordinate: str, language_code: str = "en",

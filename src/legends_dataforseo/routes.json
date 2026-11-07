@@ -1,6 +1,6 @@
 {
   "schema": "legends-dataforseo-routes/v1",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "routes": [
     {
       "name": "whoami",
@@ -227,6 +227,60 @@
       "family": "labs",
       "charged": true,
       "summary": "Bulk keyword difficulty",
+      "estimate": {
+        "base_usd": 0.012,
+        "depth_unit": null,
+        "item_usd": 0.00012,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "competitors",
+      "aliases": [
+        "serp-competitors"
+      ],
+      "kind": "api",
+      "method": "POST",
+      "path": "/dataforseo_labs/google/serp_competitors/live",
+      "family": "labs",
+      "charged": true,
+      "summary": "SERP competitors across a keyword list",
+      "estimate": {
+        "base_usd": 0.012,
+        "depth_unit": null,
+        "item_usd": 0.00012,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "ranked-keywords",
+      "aliases": [
+        "domain-keywords"
+      ],
+      "kind": "api",
+      "method": "POST",
+      "path": "/dataforseo_labs/google/ranked_keywords/live",
+      "family": "labs",
+      "charged": true,
+      "summary": "Ranked keywords and inner ranking URLs for a target domain",
+      "estimate": {
+        "base_usd": 0.012,
+        "depth_unit": null,
+        "item_usd": 0.00012,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "relevant-pages",
+      "aliases": [
+        "domain-pages"
+      ],
+      "kind": "api",
+      "method": "POST",
+      "path": "/dataforseo_labs/google/relevant_pages/live",
+      "family": "labs",
+      "charged": true,
+      "summary": "Top ranking pages and organic traffic metrics for a target domain",
       "estimate": {
         "base_usd": 0.012,
         "depth_unit": null,

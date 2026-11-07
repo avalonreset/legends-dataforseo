@@ -222,6 +222,15 @@ def view(package, *, summary=False, select=None, limit=None):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        encoding = getattr(stream, "encoding", None)
+        if isinstance(encoding, str) and encoding.lower().replace("-", "") != "utf8":
+            reconfigure = getattr(stream, "reconfigure", None)
+            if callable(reconfigure):
+                try:
+                    reconfigure(encoding="utf-8", errors="replace")
+                except (OSError, ValueError, AttributeError):
+                    pass
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     save = sub.add_parser("export")

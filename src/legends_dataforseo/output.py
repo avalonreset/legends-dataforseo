@@ -63,6 +63,12 @@ def response_summary(response: Any) -> dict[str, Any]:
                 row["result_objects"] = len(results)
                 row["items_returned"] = sum(len(result["items"]) for result in results
                                              if isinstance(result, dict) and isinstance(result.get("items"), list))
+                integrities = [result["serp_integrity"] for result in results
+                               if isinstance(result, dict) and isinstance(result.get("serp_integrity"), dict)]
+                if len(integrities) == 1:
+                    row["serp_integrity"] = integrities[0]
+                elif len(integrities) > 1:
+                    row["serp_integrity"] = integrities
             report["tasks"].append(row)
     # Preserve the control state of a bounded wait without dumping its response twice.
     if "response" in response and "attempts" in response:

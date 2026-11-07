@@ -11,10 +11,23 @@ from pathlib import Path
 
 from . import __version__
 from .client import (ApiError, CredentialError, RouteError, api_request,
-                     credential_status, estimate_cost, load_routes, route_for, normalize_path)
+                     competitors, credential_status, estimate_cost, load_routes,
+                     ranked_keywords, relevant_pages, route_for, normalize_path, serp)
 from .documentation import DocumentationError, docs_index, docs_read, docs_search, docs_sections
 from .output import ResponseFile, response_view, validate_view
 from .tasks import retrieval_path, wait_task
+
+
+def _ensure_utf8_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        encoding = getattr(stream, "encoding", None)
+        if isinstance(encoding, str) and encoding.lower().replace("-", "") != "utf8":
+            reconfigure = getattr(stream, "reconfigure", None)
+            if callable(reconfigure):
+                try:
+                    reconfigure(encoding="utf-8", errors="replace")
+                except (OSError, ValueError, AttributeError):
+                    pass
 
 
 def _output_flags(parser):
@@ -33,6 +46,7 @@ def _execution_flags(parser):
 
 
 def main(argv=None) -> int:
+    _ensure_utf8_stdio()
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["evidence"]:
         from .evidence import main as evidence_main
@@ -56,16 +70,28 @@ def main(argv=None) -> int:
     call.add_argument("--method", choices=["GET", "POST"], default=None)
     call.add_argument("--body-file", type=Path, help="UTF-8 JSON task array; do not include credentials")
     _execution_flags(call)
-    for name in ("serp", "maps", "demand", "business"):
+    for name in ("serp", "maps", "demand", "business", "competitors", "ranked-keywords", "relevant-pages"):
         command = sub.add_parser(name, help="Preview a " + name + " task; --execute sends it")
-        command.add_argument("keywords", nargs="+" if name == "demand" else 1)
+        command.add_argument("keywords", nargs="+" if name in ("demand", "competitors") else 1)
         command.add_argument("--language-code", default="en")
         if name == "maps":
             command.add_argument("--location-coordinate", required=True)
         else:
             command.add_argument("--location-code", type=int, default=2840)
+            if name in ("serp", "business"):
+                command.add_argument("--location-name", default=None)
         if name in ("serp", "maps"):
             command.add_argument("--depth", type=int, default=100 if name == "maps" else 10)
+        if name == "serp":
+            command.add_argument("--device", choices=["desktop", "mobile"], default=None)
+            command.add_argument("--os", default=None)
+            command.add_argument("--max-poison-retries", type=int, default=2,
+                                 help="Automatic retries when SearchGuard poison canaries are detected")
+            command.add_argument("--labs-fallback", action="store_true",
+                                 help="Cross-verify SERP competitors via DataForSEO Labs when wrapped or poisoned")
+        if name in ("competitors", "ranked-keywords", "relevant-pages"):
+            command.add_argument("--item-limit", type=int, default=20 if name == "competitors" else 100,
+                                 help="Maximum Lab items to request in task payload")
         _execution_flags(command)
     view = sub.add_parser("view", help="Inspect saved JSON locally without another API request")
     view.add_argument("file", type=Path)
@@ -179,14 +205,30 @@ def _run(args):
             task = {"language_code": args.language_code}
             if args.command == "demand":
                 task.update(keywords=args.keywords, location_code=args.location_code)
+            elif args.command == "competitors":
+                task.update(keywords=args.keywords, location_code=args.location_code, limit=args.item_limit)
+            elif args.command in ("ranked-keywords", "relevant-pages"):
+                from .client import _normalize_target_domain
+                task.update(target=_normalize_target_domain(args.keywords[0]),
+                            location_code=args.location_code, limit=args.item_limit)
             elif args.command == "business":
-                task.update(keyword=args.keywords[0], location_code=args.location_code)
+                task.update(keyword=args.keywords[0])
+                if getattr(args, "location_name", None):
+                    task["location_name"] = args.location_name
+                else:
+                    task["location_code"] = args.location_code
             else:
                 task.update(keyword=args.keywords[0], depth=args.depth)
                 if args.command == "maps":
                     task["location_coordinate"] = args.location_coordinate
+                elif getattr(args, "location_name", None):
+                    task["location_name"] = args.location_name
                 else:
                     task["location_code"] = args.location_code
+                if getattr(args, "device", None):
+                    task["device"] = args.device
+                if getattr(args, "os", None):
+                    task["os"] = args.os
             payload, method = [task], "POST"
         if not args.execute:
             result = {"preview": True, "path": path, "method": method, "body": payload,
@@ -194,9 +236,27 @@ def _run(args):
         else:
             if method == "POST" and (args.estimated_cost_usd is None or args.max_cost_usd is None):
                 raise RouteError("Paid CLI execution requires --estimated-cost-usd and --max-cost-usd.")
-            result = api_request(path, payload, method=method, confirm=True, timeout=args.timeout,
-                                 consumer="cli", estimated_cost_usd=args.estimated_cost_usd,
-                                 max_cost_usd=args.max_cost_usd)
+            if args.command == "serp":
+                result = serp(
+                    args.keywords[0],
+                    location_code=args.location_code,
+                    location_name=getattr(args, "location_name", None),
+                    language_code=args.language_code,
+                    depth=args.depth,
+                    device=getattr(args, "device", None),
+                    os=getattr(args, "os", None),
+                    max_poison_retries=getattr(args, "max_poison_retries", 2),
+                    labs_fallback=getattr(args, "labs_fallback", False),
+                    confirm=True,
+                    timeout=args.timeout,
+                    consumer="cli",
+                    estimated_cost_usd=args.estimated_cost_usd,
+                    max_cost_usd=args.max_cost_usd,
+                )
+            else:
+                result = api_request(path, payload, method=method, confirm=True, timeout=args.timeout,
+                                     consumer="cli", estimated_cost_usd=args.estimated_cost_usd,
+                                     max_cost_usd=args.max_cost_usd)
     return result
 
 

@@ -31,10 +31,11 @@ Install with `cto-legends install legends-dataforseo`, then follow the module re
 
 | Workflow | Included interface | What you get |
 | --- | --- | --- |
-| SERP research | `serp()` / `legends-dataforseo serp` | Google organic results in the provider's JSON envelope |
+| SERP research | `serp()` / `legends-dataforseo serp` | Google organic results with automatic `/goto` domain unmasking, `serp_integrity` checks, and optional Labs fallback |
 | Local ranking scans | `maps()` and queue `api_request()` calls | Maps live results, standard task submission, and saved-task retrieval |
 | Business profiles | `business()` / `legends-dataforseo business` | Google Business Profile (`my_business_info`) live lookup and standard queue tasks by `cid`, `place_id`, or keyword |
 | Keyword research | `demand()` / `legends-dataforseo demand` | DataForSEO Labs keyword overview for a keyword list |
+| SERP & domain Labs | `competitors()`, `ranked_keywords()`, `relevant_pages()` | DataForSEO Labs SERP competitors, domain ranked keywords, and top ranking pages |
 | Custom integrations | `api_request()` / `legends-dataforseo call` | GET/POST access to documented v3 endpoints |
 | Request planning | `routes`, `route`, `estimate`, command previews | Local discovery and baseline estimates without credentials |
 | Endpoint discovery | `docs search`, `docs read` | Official documentation with a local offline cache |
@@ -49,7 +50,7 @@ No MCP server or particular agent runtime is required.
 ## Install
 
 ```sh
-python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.8/legends_dataforseo-0.1.8-py3-none-any.whl"
+python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.9/legends_dataforseo-0.1.9-py3-none-any.whl"
 legends-dataforseo --version
 legends-dataforseo doctor
 ```

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.9 - 2026-11-07
+
+- Add `legends_dataforseo.serp_integrity` (`is_goto_wrapped_url`, `extract_breadcrumb_target`, `normalize_organic_item`, `assess_serp_integrity`, `normalize_serp_envelope`) to automatically unmask Google `/goto?url=` and `/url?q=` redirect wrappers from `breadcrumb` and `website_name`, preserve `raw_domain` / `raw_url` provenance, extract `breadcrumb_path_hint` slug hints, and flag degraded or poisoned SERP responses (`serp_integrity.status`).
+- Upgrade `serp()` and `legends-dataforseo serp` with `--location-name`, `--device`, `--os`, automatic poison retry (`--max-poison-retries`, dropping `location_coordinate` on organic retries in favor of canonical `location_name` / `location_code`), and optional `--labs-fallback` cross-verification.
+- Add first-class DataForSEO Labs helpers `competitors()`, `ranked_keywords()`, and `relevant_pages()` (`legends-dataforseo competitors`, `ranked-keywords`, `relevant-pages`) and register their routes in `routes.json`.
+- Reconfigure CLI `stdout`/`stderr` streams to UTF-8 on Windows consoles so Unicode breadcrumb separators (`›`) and international glyphs never raise `UnicodeEncodeError`.
+
 ## 0.1.8 - 2026-11-05
 
 - Add `docs/AGENT-RECIPE.md` with complete CLI/Python workflow reference and Windows Defender, EDR, and anti-ransomware guardrails, and expand `AGENTS.md` with explicit EDR security guardrails.
