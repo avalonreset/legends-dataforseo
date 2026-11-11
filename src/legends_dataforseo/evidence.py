@@ -57,7 +57,7 @@ def _safe_path(value):
                 getattr(st, "st_file_attributes", 0) & 0x400
             ):
                 raise ValueError("junction evidence path")
-        except FileNotFoundError:
+        except OSError:
             pass
     return path
 

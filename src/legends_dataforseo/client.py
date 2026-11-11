@@ -37,7 +37,7 @@ def _safe_local_path(value: Path | str) -> Path:
                 getattr(st, "st_file_attributes", 0) & 0x400
             ):
                 raise ValueError("Refusing reparse-point path.")
-        except FileNotFoundError:
+        except OSError:
             pass
     return path
 
