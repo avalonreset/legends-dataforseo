@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.10 - 2026-11-11
+
+- Enforce cumulative `max_cost_usd` spend ceilings across `serp()` SearchGuard poison retries and `labs_fallback` cross-verification, preserving the `$0.015` Labs floor so `CostLimitError` fires whenever remaining budget is insufficient.
+- Enforce ancestor-chain symlink and Windows reparse-point refusal (`_safe_local_path` / `_safe_path`) across CLI inputs (`view`, `call --body-file`, `evidence --request-file`), `--output` reservation (`0600` permissions), documentation cache paths, and cost ledgers, plus bound HTTP response reads (`MAX_RESPONSE_BYTES`).
+- Achieve 100% 1:1 CLI and Python API documentation parity across `docs/CLI.md` and `docs/API.md`, update `assets/manifest.json` for `social-preview.png`, and harden `scripts/check_release.py` with control-byte scanning and Gold Standard release checks.
+
 ## 0.1.9 - 2026-11-07
 
 - Add `legends_dataforseo.serp_integrity` (`is_goto_wrapped_url`, `extract_breadcrumb_target`, `normalize_organic_item`, `assess_serp_integrity`, `normalize_serp_envelope`) to automatically unmask Google `/goto?url=` and `/url?q=` redirect wrappers from `breadcrumb` and `website_name`, preserve `raw_domain` / `raw_url` provenance, extract `breadcrumb_path_hint` slug hints, and flag degraded or poisoned SERP responses (`serp_integrity.status`).

@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "legends-dataforseo"
-version = "0.1.9"
+version = "0.1.10"
 description = "Agent-neutral Python client and CLI for DataForSEO API v3"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
 authors = [{name = "avalonreset"}]
 dependencies = []
 keywords = ["dataforseo", "serp", "google-maps", "keyword-research", "seo", "cli"]

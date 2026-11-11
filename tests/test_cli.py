@@ -113,3 +113,25 @@ class DoctorUnittestSuite(unittest.TestCase):
             self.assertTrue(data2["dataforseo_login_configured"])
             self.assertTrue(data2["dataforseo_password_configured"])
 
+    def test_doc_to_cli_and_api_parity(self):
+        import legends_dataforseo
+        root = Path(__file__).resolve().parents[1]
+        cli_doc = (root / "docs" / "CLI.md").read_text(encoding="utf-8")
+        api_doc = (root / "docs" / "API.md").read_text(encoding="utf-8")
+        for subcommand in (
+            "doctor", "routes", "route", "estimate", "serp", "demand",
+            "competitors", "ranked-keywords", "relevant-pages", "maps",
+            "business", "call", "view", "wait", "docs", "evidence",
+        ):
+            self.assertIn(subcommand, cli_doc)
+        for flag in (
+            "--location-name", "--device", "--os", "--max-poison-retries",
+            "--labs-fallback", "--item-limit",
+        ):
+            self.assertIn(flag, cli_doc)
+        for export_name in legends_dataforseo.__all__:
+            if export_name == "__version__":
+                continue
+            self.assertIn(export_name, api_doc)
+
+

@@ -12,11 +12,34 @@ from http.client import HTTPException
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 API_ROOT = "https://api.dataforseo.com/v3"
+MAX_RESPONSE_BYTES = 50 * 1024 * 1024
+MAX_ERROR_BYTES = 4 * 1024 * 1024
+_MACOS_SYSTEM_SYMLINKS = {Path("/var"), Path("/tmp"), Path("/etc")}
+
+
+def _safe_local_path(value: Path | str) -> Path:
+    """Refuse symlinks and Windows junctions across target and non-system ancestors."""
+    path = Path(value).expanduser().absolute()
+    for idx, part in enumerate((path, *path.parents)):
+        if idx > 0 and sys.platform == "darwin" and part in _MACOS_SYSTEM_SYMLINKS:
+            continue
+        if part.is_symlink() or getattr(part, "is_junction", lambda: False)():
+            raise ValueError("Refusing symlink or junction path.")
+        try:
+            st = part.lstat()
+            if getattr(st, "st_reparse_tag", 0) == 0xA0000003 or (
+                getattr(st, "st_file_attributes", 0) & 0x400
+            ):
+                raise ValueError("Refusing reparse-point path.")
+        except FileNotFoundError:
+            pass
+    return path
 
 
 class CredentialError(RuntimeError):
@@ -158,7 +181,7 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 def _open(request: Request, timeout: float):
-    return build_opener(_NoRedirect()).open(request, timeout=timeout)
+    return build_opener(ProxyHandler({}), _NoRedirect()).open(request, timeout=timeout)
 
 
 def ledger_path() -> Path:
@@ -172,7 +195,7 @@ def ledger_path() -> Path:
 
 
 def _append_ledger(path: str, result: dict[str, Any], consumer: str) -> None:
-    target = ledger_path()
+    target = _safe_local_path(ledger_path())
     target.parent.mkdir(parents=True, exist_ok=True)
     # Route template only; do not persist task IDs or request/result bodies.
     endpoint = re.sub(r"(/task_get/(?:advanced/|regular/|html/)?)[^/]+$", r"\1{id}", path)
@@ -242,10 +265,15 @@ def api_request(
                                "User-Agent": "legends-dataforseo/" + __version__})
     try:
         with _open(request, timeout) as response:
-            result = json.loads(response.read().decode("utf-8"))
+            raw_body = response.read(MAX_RESPONSE_BYTES + 1)
+        if len(raw_body) > MAX_RESPONSE_BYTES:
+            raise ApiError("DataForSEO response exceeds maximum size limit; request was not retried.",
+                           request_may_have_completed=verb == "POST")
+        result = json.loads(raw_body.decode("utf-8"))
     except HTTPError as exc:
         try:
-            rejected = json.loads(exc.read().decode("utf-8"))
+            raw_err = exc.read(MAX_ERROR_BYTES + 1)
+            rejected = json.loads(raw_err.decode("utf-8")) if len(raw_err) <= MAX_ERROR_BYTES else None
         except (ValueError, UnicodeError, OSError, HTTPException):
             rejected = None
         finally:
@@ -299,6 +327,7 @@ def _attach_serp_retry_metadata(
     retry_attempts: int,
     attempt_task_ids: list[str],
     labs_competitors_items: list[dict[str, Any]] | None = None,
+    budget_exhausted: bool = False,
 ) -> None:
     for task in envelope.get("tasks") or []:
         if not isinstance(task, dict):
@@ -310,6 +339,8 @@ def _attach_serp_retry_metadata(
             if isinstance(integrity, dict):
                 integrity["retry_attempts"] = retry_attempts
                 integrity["attempt_task_ids"] = list(attempt_task_ids)
+                if budget_exhausted:
+                    integrity["budget_exhausted"] = True
             if labs_competitors_items is not None:
                 res_obj["labs_competitors"] = labs_competitors_items
 
@@ -346,7 +377,31 @@ def serp(
         task["os"] = os
 
     path = route_for("serp")["path"]
+    serp_step_estimate = float(
+        estimate_cost("serp", tasks=1, depth=depth if type(depth) is int and depth >= 0 else 10)["estimated_cost_usd"]
+        or 0.002
+    )
+    labs_floor = max(
+        0.015,
+        float(estimate_cost("competitors", tasks=1, items=20)["estimated_cost_usd"] or 0.015),
+    )
+    if (
+        labs_fallback
+        and request_options.get("max_cost_usd") is not None
+        and _money(request_options["max_cost_usd"], "max_cost_usd") < round(serp_step_estimate + labs_floor, 6)
+    ):
+        raise CostLimitError("Request estimate exceeds max_cost_usd; no HTTP request made.")
+
     result = api_request(path, [task], **request_options)
+
+    def _step_spend(envelope: dict[str, Any], default_est: float) -> float:
+        cost = envelope.get("cost")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost) and cost > 0:
+            return max(float(cost), default_est)
+        return default_est
+
+    spent_usd = _step_spend(result, serp_step_estimate)
+    budget_exhausted = False
 
     attempt_ids = [
         str(t["id"])
@@ -355,6 +410,14 @@ def serp(
     ]
     retries_used = 0
     while _serp_is_suspect_poisoned(result) and retries_used < max_poison_retries:
+        retry_opts = dict(request_options)
+        if retry_opts.get("max_cost_usd") is not None:
+            remaining_max = round(_money(retry_opts["max_cost_usd"], "max_cost_usd") - spent_usd, 6)
+            if remaining_max < serp_step_estimate:
+                budget_exhausted = True
+                break
+            retry_opts["max_cost_usd"] = remaining_max
+            retry_opts["estimated_cost_usd"] = serp_step_estimate
         retries_used += 1
         retry_task = dict(task)
         if "location_coordinate" in retry_task:
@@ -363,7 +426,8 @@ def serp(
                 retry_task["location_name"] = location_name
             else:
                 retry_task["location_code"] = 2840 if location_code is None else location_code
-        result = api_request(path, [retry_task], **request_options)
+        result = api_request(path, [retry_task], **retry_opts)
+        spent_usd = round(spent_usd + _step_spend(result, serp_step_estimate), 6)
         for t in result.get("tasks") or []:
             if isinstance(t, dict) and t.get("id"):
                 attempt_ids.append(str(t["id"]))
@@ -379,27 +443,41 @@ def serp(
         )
     ):
         labs_opts = dict(request_options)
-        if labs_opts.get("max_cost_usd") is not None and labs_opts.get("estimated_cost_usd") is not None:
-            labs_opts["estimated_cost_usd"] = min(float(labs_opts["max_cost_usd"]), 0.015)
-        comp_resp = competitors(
-            [keyword],
-            location_code=2840 if location_code is None else location_code,
-            language_code=language_code,
-            **labs_opts,
-        )
-        labs_items = []
-        for t in comp_resp.get("tasks") or []:
-            if isinstance(t, dict):
-                for r in t.get("result") or []:
-                    if isinstance(r, dict) and isinstance(r.get("items"), list):
-                        labs_items.extend(i for i in r["items"] if isinstance(i, dict))
+        can_run_labs = True
+        if labs_opts.get("max_cost_usd") is not None:
+            remaining_max = round(_money(labs_opts["max_cost_usd"], "max_cost_usd") - spent_usd, 6)
+            if remaining_max < labs_floor:
+                budget_exhausted = True
+                can_run_labs = False
+            else:
+                labs_opts["max_cost_usd"] = remaining_max
+                labs_opts["estimated_cost_usd"] = labs_floor
+        elif labs_opts.get("estimated_cost_usd") is not None:
+            labs_opts["estimated_cost_usd"] = max(
+                _money(labs_opts["estimated_cost_usd"], "estimated_cost_usd"),
+                labs_floor,
+            )
+        if can_run_labs:
+            comp_resp = competitors(
+                [keyword],
+                location_code=2840 if location_code is None else location_code,
+                language_code=language_code,
+                **labs_opts,
+            )
+            labs_items = []
+            for t in comp_resp.get("tasks") or []:
+                if isinstance(t, dict):
+                    for r in t.get("result") or []:
+                        if isinstance(r, dict) and isinstance(r.get("items"), list):
+                            labs_items.extend(i for i in r["items"] if isinstance(i, dict))
 
-    if retries_used > 0 or labs_items is not None:
+    if retries_used > 0 or labs_items is not None or budget_exhausted:
         _attach_serp_retry_metadata(
             result,
             retry_attempts=retries_used,
             attempt_task_ids=attempt_ids,
             labs_competitors_items=labs_items,
+            budget_exhausted=budget_exhausted,
         )
     return result
 
@@ -526,5 +604,6 @@ def total_cost(responses: list[dict[str, Any]]) -> float:
 
 
 def write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    target = _safe_local_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

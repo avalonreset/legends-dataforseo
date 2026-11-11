@@ -23,20 +23,29 @@ REQUIRED = [
     "CONTRIBUTING.md",
     "CODE_OF_CONDUCT.md",
     "CHANGELOG.md",
+    "CITATION.cff",
     "docs/AGENT-RECIPE.md",
     "docs/API.md",
     "docs/CLI.md",
     "docs/INSTALL.md",
     "skills/cto-legends/SKILL.md",
     ".legends-module",
+    ".legends-router-pin",
     "assets/manifest.json",
+    "assets/banner.png",
+    "assets/banner.webp",
+    "assets/preview.png",
+    "assets/social-preview.png",
 ]
 TEXT_SUFFIXES = {".md", ".py", ".json", ".toml", ".yml", ".in", ".txt", ".cfg", ".ini", ".cff"}
+CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]")
 FORBIDDEN = [
     r"(?i)[a-z]:\\+users\\+",
     r"(?i)\.tail[a-z0-9]+\.ts\.net",
+    r"(?i)nsec1[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{30,}",
     r"(?i)sk_live_[a-z0-9]{12,}",
     r"(?i)rk_live_[a-z0-9]{12,}",
+    r"(?i)whsec_[a-z0-9]{12,}",
     r"gh[pousr]_[A-Za-z0-9]{20,}",
     r"-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----",
     r"CREATE_NO_WINDOW",
@@ -46,6 +55,7 @@ FORBIDDEN = [
     r"ctypes\.windll",
     r"(?i)CryptUnprotectData",
     r"(?i)GetAsyncKeyState",
+    r"(?i)SetWindowsHookEx",
     r"(?i)IndexedDB",
 ]
 FORBIDDEN_FILES = {".pem", ".key", ".p12", ".pfx", ".ps1", ".bat", ".cmd", ".vbs", ".ahk"}
@@ -152,6 +162,8 @@ def check(root: Path = ROOT) -> list[str]:
             continue
         text = path.read_text(encoding="utf-8-sig")
         if path.name not in {"check_release.py", "audit_public.py"}:
+            if CONTROL_CHAR_RE.search(text):
+                errors.append(f"Control character or U+FFFD replacement character in {rel}")
             for pattern in FORBIDDEN:
                 if re.search(pattern, text):
                     errors.append(f"Possible private or EDR-sensitive residue ({pattern}): {rel}")

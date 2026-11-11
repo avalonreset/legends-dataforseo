@@ -39,15 +39,23 @@ def _hash(data):
     return hashlib.sha256(data).hexdigest()
 
 
+_MACOS_SYSTEM_SYMLINKS = {Path("/var"), Path("/tmp"), Path("/etc")}
+
+
 def _safe_path(value):
     """Do not erase linked ancestors before checking package provenance paths."""
     path = Path(value).expanduser().absolute()
-    for part in (path, *path.parents):
+    for idx, part in enumerate((path, *path.parents)):
+        if idx > 0 and sys.platform == "darwin" and part in _MACOS_SYSTEM_SYMLINKS:
+            continue
         if part.is_symlink() or getattr(part, "is_junction", lambda: False)():
             raise ValueError("linked evidence path")
         try:
             # Python 3.10/3.11 Windows lack Path.is_junction().
-            if getattr(part.lstat(), "st_reparse_tag", None) == 0xA0000003:
+            st = part.lstat()
+            if getattr(st, "st_reparse_tag", None) == 0xA0000003 or (
+                getattr(st, "st_file_attributes", 0) & 0x400
+            ):
                 raise ValueError("junction evidence path")
         except FileNotFoundError:
             pass
@@ -151,7 +159,7 @@ def assess_reuse(package, *, workspace, endpoint, request, max_age_hours, now=No
         reasons.append("future or stale observation")
     if m["status_code"] != 20000 or not m["tasks"] or any(t["status_code"] != 20000 for t in m["tasks"]):
         reasons.append("response is not fully successful")
-    raw = _loads((Path(package) / "response.json").read_bytes())
+    raw = _loads((_safe_path(package) / "response.json").read_bytes())
     if any(not t.get("result") for t in raw["tasks"]):
         reasons.append("result absent; review empty evidence separately")
     return dict(eligible=not reasons, reasons=reasons, evidence_id=m["evidence_id"],
@@ -212,11 +220,12 @@ def inventory(bank, *, workspace=None, endpoint=None, query=None, limit=50, offs
 def view(package, *, summary=False, select=None, limit=None):
     """Verify the complete package then derive a labelled local view."""
     manifest = verify(package)
-    raw = _loads((Path(package) / "response.json").read_bytes())
+    safe_pkg = _safe_path(package)
+    raw = _loads((safe_pkg / "response.json").read_bytes())
     # Full response by default; the caller explicitly chooses a focused view.
     result = response_view(raw, summary=summary,
                            select=select, limit=limit)
-    return {"evidence_id": manifest["evidence_id"], "package": str(Path(package).resolve()),
+    return {"evidence_id": manifest["evidence_id"], "package": str(safe_pkg.resolve()),
             "integrity": "verified", "note_integrity": manifest["note_integrity"],
             "provider_calls": 0, "response_view": result}
 
@@ -269,7 +278,10 @@ def main(argv=None):
             print(_json(inventory(args.bank, workspace=args.workspace, endpoint=args.endpoint,
                                  query=args.query, limit=args.limit, offset=args.offset)))
         elif args.command == "reuse":
-            request = _loads(Path(args.request_file).read_text(encoding="utf-8-sig"))
+            req_path = _safe_path(args.request_file)
+            if req_path.stat().st_size > 10 * 1024 * 1024:
+                raise ValueError("request file too large")
+            request = _loads(req_path.read_text(encoding="utf-8-sig"))
             result = assess_reuse(args.package, workspace=args.workspace, endpoint=args.endpoint,
                                  request=request, max_age_hours=args.max_age_hours,
                                  now=_date(args.now) if args.now else None)
@@ -278,7 +290,10 @@ def main(argv=None):
         elif args.command == "view":
             print(_json(view(args.package, summary=args.summary, select=args.select, limit=args.limit)))
         else:
-            request = _loads(Path(args.request_file).read_text(encoding="utf-8-sig"))
+            req_path = _safe_path(args.request_file)
+            if req_path.stat().st_size > 10 * 1024 * 1024:
+                raise ValueError("request file too large")
+            request = _loads(req_path.read_text(encoding="utf-8-sig"))
             print(export(args.response, args.destination, workspace=args.workspace,
                          endpoint=args.endpoint, request=request, observed_at=args.observed_at))
         return 0

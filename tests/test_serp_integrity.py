@@ -268,3 +268,69 @@ def test_labs_helpers_and_cli_previews(monkeypatch, capsys):
     assert cli.main(["ranked-keywords", "https://www.gattilaw.com"]) == 0
     rk_preview = json.loads(capsys.readouterr().out)
     assert rk_preview["body"][0]["target"] == "gattilaw.com"
+
+
+def test_serp_enforces_cumulative_max_cost_across_retries_and_labs_fallback(monkeypatch):
+    from legends_dataforseo import CostLimitError
+
+    poisoned_envelope = {
+        "status_code": 20000,
+        "cost": 0.002,
+        "tasks": [
+            {
+                "id": "task-poisoned-1",
+                "status_code": 20000,
+                "cost": 0.002,
+                "data": {"keyword": "personal injury lawyer", "location_coordinate": "45.5152,-122.6784,12z"},
+                "result": [
+                    {
+                        "keyword": "personal injury lawyer",
+                        "items": [
+                            {
+                                "type": "organic",
+                                "rank_group": 1,
+                                "domain": "google.com",
+                                "url": "https://google.com/goto?url=CAES_WIKI",
+                                "breadcrumb": "https://en.wikipedia.org › wiki › Personal_injury_lawyer",
+                                "title": "Personal injury lawyer - Wikipedia",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+
+    calls = []
+
+    def fake_open(req, timeout):
+        calls.append(json.loads(req.data.decode("utf-8")))
+        return io.BytesIO(json.dumps(poisoned_envelope).encode("utf-8"))
+
+    monkeypatch.setattr(client, "_open", fake_open)
+    capped_res = serp(
+        "personal injury lawyer",
+        location_coordinate="45.5152,-122.6784,12z",
+        max_poison_retries=2,
+        credentials=AUTH,
+        confirm=True,
+        estimated_cost_usd=0.002,
+        max_cost_usd=0.002,
+    )
+    assert len(calls) == 1
+    assert capped_res["tasks"][0]["result"][0]["serp_integrity"]["budget_exhausted"] is True
+    assert capped_res["tasks"][0]["result"][0]["serp_integrity"]["retry_attempts"] == 0
+
+    calls.clear()
+    with pytest.raises(CostLimitError) as exc_info:
+        serp(
+            "personal injury lawyer",
+            max_poison_retries=0,
+            labs_fallback=True,
+            credentials=AUTH,
+            confirm=True,
+            estimated_cost_usd=0.002,
+            max_cost_usd=0.010,
+        )
+    assert len(calls) == 0
+    assert exc_info.value.request_may_have_completed is False

@@ -10,9 +10,10 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .client import (ApiError, CredentialError, RouteError, api_request,
-                     competitors, credential_status, estimate_cost, load_routes,
-                     ranked_keywords, relevant_pages, route_for, normalize_path, serp)
+from .client import (MAX_RESPONSE_BYTES, ApiError, CredentialError, RouteError,
+                     _safe_local_path, api_request, competitors, credential_status,
+                     estimate_cost, load_routes, ranked_keywords, relevant_pages,
+                     route_for, normalize_path, serp)
 from .documentation import DocumentationError, docs_index, docs_read, docs_search, docs_sections
 from .output import ResponseFile, response_view, validate_view
 from .tasks import retrieval_path, wait_task
@@ -154,7 +155,10 @@ def _run(args):
             return docs_search(args.query, limit=args.limit, section=args.section, **options)
         return docs_read(args.path, **options)
     elif args.command == "view":
-        return json.loads(args.file.read_text(encoding="utf-8-sig"))
+        target = _safe_local_path(args.file)
+        if target.stat().st_size > MAX_RESPONSE_BYTES:
+            raise ValueError("Input file exceeds maximum size limit.")
+        return json.loads(target.read_text(encoding="utf-8-sig"))
     elif args.command == "wait":
         path = retrieval_path(args.path)
         if not args.execute:
@@ -198,7 +202,13 @@ def _run(args):
     else:
         if args.command == "call":
             path = normalize_path(args.path)
-            payload = json.loads(args.body_file.read_text(encoding="utf-8-sig")) if args.body_file else None
+            if args.body_file:
+                body_target = _safe_local_path(args.body_file)
+                if body_target.stat().st_size > 10 * 1024 * 1024:
+                    raise ValueError("Task body file exceeds maximum size limit.")
+                payload = json.loads(body_target.read_text(encoding="utf-8-sig"))
+            else:
+                payload = None
             method = args.method or ("POST" if payload is not None else "GET")
         else:
             path = route_for(args.command)["path"]

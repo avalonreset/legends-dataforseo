@@ -16,7 +16,9 @@ import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+from .client import _safe_local_path
 
 DOCS_ROOT = "https://docs.dataforseo.com/v3"
 INDEX_URL = DOCS_ROOT + "/llms.txt/"
@@ -33,7 +35,7 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 def _open(request, timeout):
-    return build_opener(_NoRedirect()).open(request, timeout=timeout)
+    return build_opener(ProxyHandler({}), _NoRedirect()).open(request, timeout=timeout)
 
 
 def _url(path):
@@ -75,8 +77,11 @@ def _document(url, *, cache_dir=None, offline=False, refresh=False, ttl=86400, t
         raise DocumentationError("offline and refresh must be booleans")
     if offline and refresh:
         raise DocumentationError("offline and refresh cannot be combined")
-    cache = Path(cache_dir) if cache_dir is not None else _default_cache()
-    target = cache / (hashlib.sha256(url.encode()).hexdigest() + ".json")
+    try:
+        cache = _safe_local_path(cache_dir if cache_dir is not None else _default_cache())
+        target = _safe_local_path(cache / (hashlib.sha256(url.encode()).hexdigest() + ".json"))
+    except ValueError as exc:
+        raise DocumentationError("Linked documentation cache paths are not permitted") from exc
     saved = None
     try:
         if target.stat().st_size <= MAX_DOCUMENT_BYTES * 7:

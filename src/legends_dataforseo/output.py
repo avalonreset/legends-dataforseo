@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
+
+from .client import _safe_local_path
 
 
 def validate_view(select: list[str] | None = None, limit: int | None = None) -> None:
@@ -120,7 +123,10 @@ class ResponseFile:
 
     def __enter__(self):
         # Do not create directory trees silently: a typo must fail before a paid call.
-        self.stream = self.path.open("x", encoding="utf-8")
+        target = _safe_local_path(self.path)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(target, flags, 0o600)
+        self.stream = os.fdopen(fd, "w", encoding="utf-8")
         return self
 
     def write(self, response: Any) -> None:

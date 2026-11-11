@@ -10,10 +10,18 @@ api_request(
     consumer="python", estimated_cost_usd=None, max_cost_usd=None,
 ) -> dict
 
-serp(keyword, *, location_code=2840, language_code="en", depth=10,
+serp(keyword, *, location_code=2840, location_name=None,
+     location_coordinate=None, language_code="en", depth=10,
+     device=None, os=None, max_poison_retries=2, labs_fallback=False,
      **request_options) -> dict
 demand(keywords, *, location_code=2840, language_code="en",
        **request_options) -> dict
+competitors(keywords, *, location_code=2840, language_code="en", limit=20,
+            **request_options) -> dict
+ranked_keywords(target, *, location_code=2840, language_code="en", limit=100,
+                **request_options) -> dict
+relevant_pages(target, *, location_code=2840, language_code="en", limit=100,
+               **request_options) -> dict
 maps(keyword, *, location_coordinate, language_code="en", depth=100,
      **request_options) -> dict
 business(keyword=None, *, target=None, location_code=2840, location_name=None,
@@ -59,8 +67,11 @@ Exception messages do not echo provider text, query bodies, or credentials.
 failure. Never treat a timeout as evidence that a paid submission was rejected.
 Treat `.response` as private data. `CredentialError` means missing/incomplete
 credentials; `RouteError` is invalid input; `CostLimitError(ApiError)` is a
-preflight refusal. There are no automatic retries, account fallbacks, queue
-polls, or sleeps. A timeout does not prove that the provider did not charge.
+preflight refusal. There are no automatic retries on raw `api_request` calls,
+and no account fallbacks, queue polls, or sleeps (`serp()` supports bounded
+SearchGuard poison retries via `max_poison_retries` and optional `labs_fallback`
+strictly within the caller's cumulative `max_cost_usd` ceiling). A timeout does
+not prove that the provider did not charge.
 
 ```python
 from legends_dataforseo import ApiError, api_request
@@ -88,8 +99,12 @@ cost, top-level status, and caller-supplied consumer label. Use a non-sensitive
 consumer label. Ledger errors warn without hiding the completed API response.
 
 Offline helpers: `load_routes()`, `route_for(operation)`,
-`estimate_cost(operation, *, tasks=1, depth=0, items=0)`, `total_cost(responses)`.
-`write_json(Path, payload)` explicitly saves caller-selected data.
+`estimate_cost(operation, *, tasks=1, depth=0, items=0)`, `total_cost(responses)`,
+`ledger_path()`. `write_json(Path, payload)` explicitly saves caller-selected data.
+Organic SERP integrity helpers: `is_goto_wrapped_url(url)`,
+`extract_breadcrumb_target(breadcrumb, website_name=None)`,
+`normalize_organic_item(item)`, `assess_serp_integrity(result_block, *, task_data=None)`,
+`normalize_serp_envelope(envelope, *, endpoint=None)`.
 
 ## Compatibility
 
@@ -141,7 +156,8 @@ Pin a release or full commit. Breaking changes will be documented and versioned.
 ## Research evidence
 
 `legends_dataforseo.evidence` provides offline `export`, `verify`, and
-`assess_reuse` helpers. The module CLI supports `export` and `verify`.
+`assess_reuse` helpers. The module CLI supports `export`, `verify`, `inventory`,
+`find`, `reuse`, and `view`.
 See [research memory](RESEARCH-MEMORY.md) for the complete handoff contract.
 No provider calls, implicit vault writes, or request API changes are introduced.
 

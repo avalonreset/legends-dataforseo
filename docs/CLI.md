@@ -12,15 +12,19 @@ legends-dataforseo doctor
 legends-dataforseo routes
 legends-dataforseo route maps-task-post
 legends-dataforseo estimate maps --tasks 9 --depth 100
-legends-dataforseo serp "technical SEO" --location-code 2840
+legends-dataforseo serp "technical SEO" --location-code 2840 --location-name "United States" --device desktop --os windows --max-poison-retries 2 --labs-fallback
 legends-dataforseo demand "technical SEO" "local SEO"
+legends-dataforseo competitors "technical SEO" "local SEO" --item-limit 20
+legends-dataforseo ranked-keywords "example.com" --item-limit 100
+legends-dataforseo relevant-pages "example.com" --item-limit 100
 legends-dataforseo maps "coffee" --location-coordinate "40.7128,-74.0060,15z"
-legends-dataforseo business "cid:1234567890123456789" --location-code 2840
+legends-dataforseo business "cid:1234567890123456789" --location-code 2840 --location-name "United States"
 ```
 
 Named request commands preview by default. The registry includes endpoint
-descriptions beyond the four named helpers; discovery is not a promise that
-every route has its own command or has been live-tested.
+descriptions beyond the seven named helpers (`serp`, `maps`, `demand`,
+`business`, `competitors`, `ranked-keywords`, and `relevant-pages`); discovery
+is not a promise that every route has its own command or has been live-tested.
 
 `docs search`, `docs index`, `docs sections`, and `docs read` discover official
 documentation without credentials or charges. They use the network unless a
@@ -58,9 +62,15 @@ status; polling and retry decisions belong to the caller.
 | `--max-cost-usd` | Local estimate ceiling, not a provider billing cap. Required for paid POST execution. |
 | `--timeout` | Request timeout in seconds; default 90. |
 | `--language-code` | Named-helper language code; default `en`. |
-| `--location-code` | SERP/demand location code; default `2840`. |
+| `--location-code` | SERP/demand/business/Labs location code; default `2840`. |
+| `--location-name` | Optional canonical location name for `serp` and `business`. |
 | `--location-coordinate` | Required Maps coordinate and zoom value. |
 | `--depth` | SERP/Maps result depth; defaults 10/100 respectively. |
+| `--device` | Optional `serp` device (`desktop` or `mobile`). |
+| `--os` | Optional `serp` operating system filter. |
+| `--max-poison-retries` | Bounded SearchGuard poison retries for `serp` within cumulative `--max-cost-usd`; default 2. |
+| `--labs-fallback` | Optional DataForSEO Labs competitor cross-verification for `serp` within cumulative `--max-cost-usd`. |
+| `--item-limit` | Maximum Lab items for `competitors` (default 20), `ranked-keywords` (default 100), and `relevant-pages` (default 100). |
 | `--output` | Save full JSON to a new file reserved before HTTP; print a summary. |
 | `--summary` | Display IDs, statuses and costs without result bodies. |
 | `--select` | Select a dotted field; repeat for multiple fields. |
