@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.11 - 2026-11-11
+
+- Add `legends_dataforseo.google_stipend` with a Zero-Overage Google Free-Stipend Ledger (`STIPEND_SKUS`, `google_ledger_path`, `stipend_status`, `can_use_stipend`, `reserve_stipend`, `check_and_reserve`, `redact_google_key`, `resolve_google_api_key`) enforcing 80-85% local hard safety ceilings across Places (`ids_only`, `essentials`, `pro`, `enterprise`), Geocoding, 2D Map Tiles, Static Maps, PageSpeed Insights, and Custom Search with automatic daily/monthly UTC rollover and session circuit-breaking on `403 SERVICE_DISABLED` / `API_KEY_SERVICE_BLOCKED`.
+- Add free-first Google API helpers (`google_places_lookup`, `google_pagespeed_insights` with automatic keyless retry on `403`, and `google_custom_search`) plus hybrid DataForSEO fallback helpers (`business_lookup_hybrid`, `pagespeed_hybrid`).
+- Expand `legends-dataforseo` CLI with `stipend` (`--stipend-status`), `psi` (`--url`, `--strategy`, `--fallback-onpage`), and `business --prefer-google-free`.
+
 ## 0.1.10 - 2026-11-11
 
 - Enforce cumulative `max_cost_usd` spend ceilings across `serp()` SearchGuard poison retries and `labs_fallback` cross-verification, preserving the `$0.015` Labs floor so `CostLimitError` fires whenever remaining budget is insufficient.

@@ -11,9 +11,11 @@ from pathlib import Path
 
 from . import __version__
 from .client import (MAX_RESPONSE_BYTES, ApiError, CredentialError, RouteError,
-                     _safe_local_path, api_request, competitors, credential_status,
-                     estimate_cost, load_routes, ranked_keywords, relevant_pages,
-                     route_for, normalize_path, serp)
+                     _safe_local_path, api_request, business_lookup_hybrid,
+                     competitors, credential_status, estimate_cost,
+                     google_pagespeed_insights, load_routes, normalize_path,
+                     pagespeed_hybrid, ranked_keywords, relevant_pages,
+                     route_for, serp, stipend_status)
 from .documentation import DocumentationError, docs_index, docs_read, docs_search, docs_sections
 from .output import ResponseFile, response_view, validate_view
 from .tasks import retrieval_path, wait_task
@@ -52,11 +54,28 @@ def main(argv=None) -> int:
     if argv[:1] == ["evidence"]:
         from .evidence import main as evidence_main
         return evidence_main(argv[1:])
+    if argv and argv[0] == "--stipend-status":
+        argv = ["stipend", *argv[1:]]
     parser = argparse.ArgumentParser(prog="legends-dataforseo", description=__doc__)
     parser.add_argument("--version", action="version", version=__version__)
+    parser.add_argument("--stipend-status", action="store_true",
+                        help="Inspect Zero-Overage Google free-stipend ledger status")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("routes", help="Offline operation registry")
     sub.add_parser("evidence", help="Offline export, inventory, verify, reuse, and view")
+    stipend = sub.add_parser("stipend", help="Inspect Zero-Overage Google free-stipend ledger")
+    stipend.add_argument("--sku", default=None, help="Filter status to a single Google SKU")
+    stipend.add_argument("--ledger-path", type=Path, default=None, help="Optional override ledger path")
+    _output_flags(stipend)
+    psi = sub.add_parser("psi", help="Run free Google PageSpeed Insights v5 ($0.00 stipend)")
+    psi.add_argument("target_url", nargs="?", default=None, help="Target URL to analyze")
+    psi.add_argument("--url", dest="url_flag", default=None, help="Target URL to analyze")
+    psi.add_argument("--strategy", choices=["mobile", "desktop"], default="mobile")
+    psi.add_argument("--preview", action="store_true", help="Preview PSI parameters offline")
+    psi.add_argument("--fallback-onpage", action="store_true",
+                     help="Fall back to DataForSEO onpage if PSI fails or cap is reached")
+    psi.add_argument("--ledger-path", type=Path, default=None, help="Optional override ledger path")
+    _execution_flags(psi)
     route = sub.add_parser("route")
     route.add_argument("operation")
     estimate = sub.add_parser("estimate", help="Offline baseline estimate")
@@ -66,6 +85,7 @@ def main(argv=None) -> int:
     estimate.add_argument("--items", type=int, default=0)
     doctor = sub.add_parser("doctor", help="Installation and credential presence; no values")
     doctor.add_argument("--live", action="store_true", help="Also make a no-charge account authentication probe")
+    doctor.add_argument("--stipend-status", action="store_true", help="Include Google stipend status in doctor output")
     call = sub.add_parser("call", help="Preview or execute a documented v3 endpoint")
     call.add_argument("path")
     call.add_argument("--method", choices=["GET", "POST"], default=None)
@@ -81,6 +101,11 @@ def main(argv=None) -> int:
             command.add_argument("--location-code", type=int, default=2840)
             if name in ("serp", "business"):
                 command.add_argument("--location-name", default=None)
+        if name == "business":
+            command.add_argument("--prefer-google-free", action="store_true",
+                                 help="Try free Google Places stipend before paid DataForSEO business lookup")
+            command.add_argument("--places-tier", choices=["ids_only", "essentials", "pro", "enterprise"],
+                                 default="pro", help="Google Places free stipend tier")
         if name in ("serp", "maps"):
             command.add_argument("--depth", type=int, default=100 if name == "maps" else 10)
         if name == "serp":
@@ -172,6 +197,44 @@ def _run(args):
         result = route_for(args.operation)
     elif args.command == "estimate":
         result = estimate_cost(args.operation, tasks=args.tasks, depth=args.depth, items=args.items)
+    elif args.command == "stipend":
+        status = stipend_status(ledger_path=args.ledger_path)
+        if args.sku:
+            if args.sku not in status["skus"]:
+                raise RouteError(f"Unknown stipend SKU: {args.sku}")
+            result = status["skus"][args.sku]
+        else:
+            result = status
+    elif args.command == "psi":
+        target_url = args.url_flag or args.target_url
+        if not target_url:
+            raise RouteError("Specify --url <https://...> for psi.")
+        if args.preview:
+            result = {
+                "preview": True,
+                "command": "psi",
+                "url": target_url,
+                "strategy": args.strategy,
+                "estimated_cost_usd": 0.0,
+            }
+        elif args.fallback_onpage:
+            result = pagespeed_hybrid(
+                target_url,
+                strategy=args.strategy,
+                ledger_path=args.ledger_path,
+                confirm=bool(args.execute),
+                timeout=args.timeout,
+                consumer="cli",
+                estimated_cost_usd=args.estimated_cost_usd,
+                max_cost_usd=args.max_cost_usd,
+            )
+        else:
+            result = google_pagespeed_insights(
+                target_url,
+                strategy=args.strategy,
+                ledger_path=args.ledger_path,
+                timeout=args.timeout,
+            )
     elif args.command == "doctor":
         creds = credential_status()
         login_set = bool(
@@ -193,6 +256,8 @@ def _run(args):
             "dataforseo_password_configured": password_set,
             "live": False,
         }
+        if getattr(args, "stipend_status", False):
+            result["google_stipend"] = stipend_status()
         if args.live:
             response = api_request("/appendix/user_data")
             statuses = [t.get("status_code") for t in response.get("tasks") or []]
@@ -244,29 +309,45 @@ def _run(args):
             result = {"preview": True, "path": path, "method": method, "body": payload,
                       "estimated_cost_usd": args.estimated_cost_usd, "max_cost_usd": args.max_cost_usd}
         else:
-            if method == "POST" and (args.estimated_cost_usd is None or args.max_cost_usd is None):
-                raise RouteError("Paid CLI execution requires --estimated-cost-usd and --max-cost-usd.")
-            if args.command == "serp":
-                result = serp(
+            if args.command == "business" and getattr(args, "prefer_google_free", False):
+                has_budget = args.estimated_cost_usd is not None and args.max_cost_usd is not None
+                result = business_lookup_hybrid(
                     args.keywords[0],
+                    tier=getattr(args, "places_tier", "pro"),
+                    fallback_to_dataforseo=has_budget,
                     location_code=args.location_code,
                     location_name=getattr(args, "location_name", None),
                     language_code=args.language_code,
-                    depth=args.depth,
-                    device=getattr(args, "device", None),
-                    os=getattr(args, "os", None),
-                    max_poison_retries=getattr(args, "max_poison_retries", 2),
-                    labs_fallback=getattr(args, "labs_fallback", False),
-                    confirm=True,
+                    confirm=has_budget,
                     timeout=args.timeout,
                     consumer="cli",
                     estimated_cost_usd=args.estimated_cost_usd,
                     max_cost_usd=args.max_cost_usd,
                 )
             else:
-                result = api_request(path, payload, method=method, confirm=True, timeout=args.timeout,
-                                     consumer="cli", estimated_cost_usd=args.estimated_cost_usd,
-                                     max_cost_usd=args.max_cost_usd)
+                if method == "POST" and (args.estimated_cost_usd is None or args.max_cost_usd is None):
+                    raise RouteError("Paid CLI execution requires --estimated-cost-usd and --max-cost-usd.")
+                if args.command == "serp":
+                    result = serp(
+                        args.keywords[0],
+                        location_code=args.location_code,
+                        location_name=getattr(args, "location_name", None),
+                        language_code=args.language_code,
+                        depth=args.depth,
+                        device=getattr(args, "device", None),
+                        os=getattr(args, "os", None),
+                        max_poison_retries=getattr(args, "max_poison_retries", 2),
+                        labs_fallback=getattr(args, "labs_fallback", False),
+                        confirm=True,
+                        timeout=args.timeout,
+                        consumer="cli",
+                        estimated_cost_usd=args.estimated_cost_usd,
+                        max_cost_usd=args.max_cost_usd,
+                    )
+                else:
+                    result = api_request(path, payload, method=method, confirm=True, timeout=args.timeout,
+                                         consumer="cli", estimated_cost_usd=args.estimated_cost_usd,
+                                         max_cost_usd=args.max_cost_usd)
     return result
 
 

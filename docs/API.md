@@ -106,6 +106,20 @@ Organic SERP integrity helpers: `is_goto_wrapped_url(url)`,
 `normalize_organic_item(item)`, `assess_serp_integrity(result_block, *, task_data=None)`,
 `normalize_serp_envelope(envelope, *, endpoint=None)`.
 
+Zero-Overage Google free-stipend and hybrid helpers:
+`STIPEND_SKUS`, `google_ledger_path(ledger_path=None)`,
+`stipend_status(ledger_path=None, now=None)`,
+`can_use_stipend(sku, count=1, ledger_path=None, now=None)`,
+`reserve_stipend(sku, count=1, ledger_path=None, now=None)`,
+`check_and_reserve(sku, count=1, ledger_path=None, now=None)`,
+`redact_google_key(text, key=None)`,
+`resolve_google_api_key(*env_names, dotenv_path=None)`,
+`google_places_lookup(query, *, tier="pro", location_bias=None, api_key=None, ledger_path=None, timeout=15)`,
+`google_pagespeed_insights(url, *, strategy="mobile", categories=("performance", "seo", "accessibility", "best-practices"), api_key=None, ledger_path=None, timeout=30)`,
+`google_custom_search(query, *, cx=None, api_key=None, num=10, ledger_path=None, timeout=15)`,
+`business_lookup_hybrid(keyword=None, *, target=None, tier="pro", fallback_to_dataforseo=True, **request_options)`,
+`pagespeed_hybrid(url, *, strategy="mobile", fallback_to_dataforseo=True, **request_options)`.
+
 ## Compatibility
 
 The baseline ships optional helpers on top of the stable request signatures and

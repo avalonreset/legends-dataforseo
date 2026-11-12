@@ -9,6 +9,9 @@ remain in the provider envelope; inspect them even when the command exits `0`.
 
 ```sh
 legends-dataforseo doctor
+legends-dataforseo stipend
+legends-dataforseo --stipend-status
+legends-dataforseo psi --url "https://example.com" --strategy mobile --preview
 legends-dataforseo routes
 legends-dataforseo route maps-task-post
 legends-dataforseo estimate maps --tasks 9 --depth 100
@@ -18,7 +21,7 @@ legends-dataforseo competitors "technical SEO" "local SEO" --item-limit 20
 legends-dataforseo ranked-keywords "example.com" --item-limit 100
 legends-dataforseo relevant-pages "example.com" --item-limit 100
 legends-dataforseo maps "coffee" --location-coordinate "40.7128,-74.0060,15z"
-legends-dataforseo business "cid:1234567890123456789" --location-code 2840 --location-name "United States"
+legends-dataforseo business "cid:1234567890123456789" --location-code 2840 --location-name "United States" --prefer-google-free
 ```
 
 Named request commands preview by default. The registry includes endpoint

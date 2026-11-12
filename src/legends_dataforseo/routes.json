@@ -1,6 +1,6 @@
 {
   "schema": "legends-dataforseo-routes/v1",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "routes": [
     {
       "name": "whoami",

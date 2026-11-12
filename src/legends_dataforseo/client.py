@@ -607,3 +607,113 @@ def write_json(path: Path, payload: Any) -> None:
     target = _safe_local_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+from .google_stipend import (  # noqa: E402
+    PLACES_FIELD_MASKS,
+    STIPEND_SKUS,
+    can_use_stipend,
+    check_and_reserve,
+    clear_disabled_services,
+    google_custom_search,
+    google_ledger_path,
+    google_pagespeed_insights,
+    google_places_lookup,
+    is_service_disabled,
+    mark_service_disabled,
+    redact_google_key,
+    reserve_stipend,
+    resolve_google_api_key,
+    stipend_status,
+)
+
+
+def business_lookup_hybrid(
+    keyword: str | None = None,
+    *,
+    target: str | None = None,
+    tier: str = "pro",
+    location_bias: dict[str, Any] | str | None = None,
+    api_key: str | None = None,
+    ledger_path: Path | str | None = None,
+    fallback_to_dataforseo: bool = True,
+    location_code: int | None = 2840,
+    location_name: str | None = None,
+    location_coordinate: str | None = None,
+    language_code: str = "en",
+    tag: str | None = None,
+    **request_options: Any,
+) -> dict[str, Any]:
+    """Try free Google Places stipend first; fall back to DataForSEO business() when enabled."""
+    if keyword is not None and target is not None:
+        raise RouteError("Specify either keyword or target, not both.")
+    query = target if keyword is None else keyword
+    if not isinstance(query, str) or not query.strip():
+        raise RouteError("keyword must be a nonempty string.")
+    bias = location_bias if location_bias is not None else location_coordinate
+    stipend_res = google_places_lookup(
+        query,
+        tier=tier,
+        location_bias=bias,
+        api_key=api_key,
+        ledger_path=ledger_path,
+        timeout=float(request_options.get("timeout", 15)),
+    )
+    if stipend_res.get("ok") and stipend_res.get("items"):
+        return stipend_res
+    if not fallback_to_dataforseo:
+        return stipend_res
+    dfs_res = business(
+        query,
+        location_code=location_code,
+        location_name=location_name,
+        location_coordinate=location_coordinate,
+        language_code=language_code,
+        tag=tag,
+        **request_options,
+    )
+    if isinstance(dfs_res, dict):
+        dfs_res["stipend_fallback_reason"] = stipend_res.get("reason") or "empty_places_result"
+    return dfs_res
+
+
+def pagespeed_hybrid(
+    url: str,
+    *,
+    strategy: str = "mobile",
+    categories: tuple[str, ...] | list[str] = ("performance", "seo", "accessibility", "best-practices"),
+    api_key: str | None = None,
+    ledger_path: Path | str | None = None,
+    fallback_to_dataforseo: bool = True,
+    **request_options: Any,
+) -> dict[str, Any]:
+    """Try free Google PageSpeed Insights v5 first; fall back to DataForSEO onpage when enabled."""
+    if not isinstance(url, str) or not url.strip():
+        raise RouteError("url must be a nonempty string.")
+    from .google_stipend import _validate_public_web_url
+
+    try:
+        clean_url = _validate_public_web_url(url)
+    except ValueError as exc:
+        raise RouteError(str(exc)) from exc
+    stipend_res = google_pagespeed_insights(
+        clean_url,
+        strategy=strategy,
+        categories=categories,
+        api_key=api_key,
+        ledger_path=ledger_path,
+        timeout=float(request_options.get("timeout", 30)),
+    )
+    if stipend_res.get("ok"):
+        return stipend_res
+    if not fallback_to_dataforseo:
+        return stipend_res
+    dfs_res = api_request(
+        route_for("onpage")["path"],
+        [{"url": clean_url}],
+        **request_options,
+    )
+    if isinstance(dfs_res, dict):
+        dfs_res["stipend_fallback_reason"] = stipend_res.get("reason") or "pagespeed_unavailable"
+    return dfs_res
+

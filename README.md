@@ -33,7 +33,8 @@ Install with `cto-legends install legends-dataforseo`, then follow the module re
 | --- | --- | --- |
 | SERP research | `serp()` / `legends-dataforseo serp` | Google organic results with automatic `/goto` domain unmasking, `serp_integrity` checks, and optional Labs fallback |
 | Local ranking scans | `maps()` and queue `api_request()` calls | Maps live results, standard task submission, and saved-task retrieval |
-| Business profiles | `business()` / `legends-dataforseo business` | Google Business Profile (`my_business_info`) live lookup and standard queue tasks by `cid`, `place_id`, or keyword |
+| Business profiles | `business()` / `business_lookup_hybrid()` | Google Business Profile (`my_business_info`) live lookup, standard queue tasks, and optional free-first Google Places stipend resolution |
+| Free Google Stipend & PSI | `google_pagespeed_insights()`, `google_places_lookup()`, `stipend_status()` | Zero-overage Google free-stipend ledger (`80-85%` local hard caps) and free PageSpeed Insights v5 (`legends-dataforseo psi`) |
 | Keyword research | `demand()` / `legends-dataforseo demand` | DataForSEO Labs keyword overview for a keyword list |
 | SERP & domain Labs | `competitors()`, `ranked_keywords()`, `relevant_pages()` | DataForSEO Labs SERP competitors, domain ranked keywords, and top ranking pages |
 | Custom integrations | `api_request()` / `legends-dataforseo call` | GET/POST access to documented v3 endpoints |
@@ -50,7 +51,7 @@ No MCP server or particular agent runtime is required.
 ## Install
 
 ```sh
-python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.10/legends_dataforseo-0.1.10-py3-none-any.whl"
+python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.11/legends_dataforseo-0.1.11-py3-none-any.whl"
 legends-dataforseo --version
 legends-dataforseo doctor
 ```
