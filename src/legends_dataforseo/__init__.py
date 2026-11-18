@@ -1,6 +1,6 @@
 """Public, agent-neutral DataForSEO API v3 transport."""
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 
 from .client import (
     API_ROOT, ApiError, CostLimitError, CredentialError, Credentials, RouteError,

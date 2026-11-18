@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.11 - 2026-11-18
+
+- Harden ancestor-chain symlink and reparse-point checks (`_safe_local_path` in `src/legends_dataforseo/client.py` and `_safe_path` in `src/legends_dataforseo/evidence.py`) to catch `OSError` (including `NotADirectoryError` / `ENOTDIR` on POSIX when a regular file sits in an ancestor component) while preserving symlink and junction refusal.
+
 ## 0.1.10 - 2026-11-11
 
 - Enforce cumulative `max_cost_usd` spend ceilings across `serp()` SearchGuard poison retries and `labs_fallback` cross-verification, preserving the `$0.015` Labs floor so `CostLimitError` fires whenever remaining budget is insufficient.
