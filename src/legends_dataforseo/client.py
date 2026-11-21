@@ -186,8 +186,22 @@ class _NoRedirect(HTTPRedirectHandler):
         return None  # Credentials must never follow a redirect to another host.
 
 
+def _ssl_context():
+    try:
+        import certifi
+        import ssl
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return None
+
+
 def _open(request: Request, timeout: float):
-    return build_opener(ProxyHandler({}), _NoRedirect()).open(request, timeout=timeout)
+    ctx = _ssl_context()
+    handlers = [ProxyHandler({}), _NoRedirect()]
+    if ctx is not None:
+        from urllib.request import HTTPSHandler
+        handlers.insert(1, HTTPSHandler(context=ctx))
+    return build_opener(*handlers).open(request, timeout=timeout)
 
 
 def ledger_path() -> Path:
@@ -358,6 +372,8 @@ def _enforce_resolve(payload: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         elif value is not True and not escape:
             raise RouteError("Google organic SERP tasks must send resolve_poisoned_results=true (decoy defense). "
                              f"Set {ALLOW_POISONED_ENV}=1 to send unprotected tasks; results are stamped unprotected.")
+        if body.get("resolve_poisoned_results") is True and body.get("resolve_goto_urls") is None:
+            body["resolve_goto_urls"] = True
         out.append(body)
     return out, injected
 

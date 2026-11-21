@@ -120,6 +120,7 @@ def _protected_env(monkeypatch):
 
 def test_site_key_and_overlap_helpers():
     assert site_key("https://www.blog.example.co.uk/path") == "example.co.uk"
+    assert site_key("https://www.heartfoundation.org.nz/health") == "heartfoundation.org.nz"
     assert site_key("WWW.Sub.Example.com") == "example.com"
     assert site_key("") is None and site_key(None) is None
     assert overlap_ratio(["a.com", "b.com"], ["b.com"]) == 0.5

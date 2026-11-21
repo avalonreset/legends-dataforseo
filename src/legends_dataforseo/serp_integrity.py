@@ -313,7 +313,7 @@ def allow_poisoned() -> bool:
     return os.environ.get(ALLOW_POISONED_ENV, "").strip() == "1"
 
 _TWO_LEVEL_SUFFIXES = frozenset({
-    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp",
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "org.nz", "govt.nz", "ac.nz", "co.jp",
     "com.br", "com.mx", "co.in", "co.za", "com.sg", "com.tr",
 })
 

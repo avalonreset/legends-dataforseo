@@ -254,6 +254,7 @@ def _run(args):
                         task["resolve_poisoned_results"] = False
                     else:
                         task["resolve_poisoned_results"] = resolve_poisoned_default()
+                        task["resolve_goto_urls"] = True
             payload, method = [task], "POST"
         if not args.execute:
             result = {"preview": True, "path": path, "method": method, "body": payload,
