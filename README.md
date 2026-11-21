@@ -50,7 +50,7 @@ No MCP server or particular agent runtime is required.
 ## Install
 
 ```sh
-python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.11/legends_dataforseo-0.1.11-py3-none-any.whl"
+python -m pip install "https://github.com/avalonreset/legends-dataforseo/releases/download/v0.1.12/legends_dataforseo-0.1.12-py3-none-any.whl"
 legends-dataforseo --version
 legends-dataforseo doctor
 ```

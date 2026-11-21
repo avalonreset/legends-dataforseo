@@ -68,7 +68,9 @@ status; polling and retry decisions belong to the caller.
 | `--depth` | SERP/Maps result depth; defaults 10/100 respectively. |
 | `--device` | Optional `serp` device (`desktop` or `mobile`). |
 | `--os` | Optional `serp` operating system filter. |
-| `--max-poison-retries` | Bounded SearchGuard poison retries for `serp` within cumulative `--max-cost-usd`; default 2. |
+| `--max-poison-retries` | Bounded SearchGuard poison and `suspect_decoy` re-pulls for `serp` within cumulative `--max-cost-usd`; default 2. |
+| `--no-resolve-poisoned` | Do not send `resolve_poisoned_results` on `serp` (default on since 0.1.12; it costs one extra SERP page per task). Env opt-out: `LEGENDS_DATAFORSEO_RESOLVE_POISONED=0`. |
+| `--decoy-traffic-check` | Score `serp` top-10 sites against cached Labs bulk traffic (paid when not cached) as decoy filler evidence. |
 | `--labs-fallback` | Optional DataForSEO Labs competitor cross-verification for `serp` within cumulative `--max-cost-usd`. |
 | `--item-limit` | Maximum Lab items for `competitors` (default 20), `ranked-keywords` (default 100), and `relevant-pages` (default 100). |
 | `--output` | Save full JSON to a new file reserved before HTTP; print a summary. |

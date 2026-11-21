@@ -1,8 +1,9 @@
-"""Organic SERP redirect-wrapper unmasking and SearchGuard degradation detection."""
+"""Organic SERP redirect-wrapper unmasking, SearchGuard degradation and decoy-SERP detection."""
 
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
 
@@ -173,6 +174,7 @@ def assess_serp_integrity(
             "canary_hits": [],
             "used_location_coordinate": False,
             "reasons": [],
+            "decoy": assess_decoy_signals({}, task_data=task_data),
         }
 
     organic_items: list[dict[str, Any]] = []
@@ -237,7 +239,7 @@ def assess_serp_integrity(
             "use location_name or location_code for organic web SERPs"
         )
 
-    return {
+    integrity = {
         "status": "suspect_poisoned" if reasons else "clean",
         "organic_count": organic_count,
         "goto_wrapped_count": goto_wrapped_count,
@@ -246,6 +248,7 @@ def assess_serp_integrity(
         "used_location_coordinate": used_coord,
         "reasons": reasons,
     }
+    return apply_decoy_assessment(integrity, assess_decoy_signals(result_block, task_data=task_data))
 
 
 def normalize_serp_envelope(
@@ -280,3 +283,247 @@ def normalize_serp_envelope(
             if has_organic or (is_organic_endpoint and items):
                 res_obj["serp_integrity"] = assess_serp_integrity(res_obj, task_data=task_data)
     return envelope
+
+
+# ---------------------------------------------------------------------------
+# 0.1.12: decoy SERP detection (flavor 2: real page-1 winners replaced by
+# shuffled back-half / stale low-traffic filler while the surface looks normal).
+# ---------------------------------------------------------------------------
+
+# Calibrated on the 2026-11-20 decoy bench (see CHANGELOG 0.1.12). A signal is
+# only scored when enough evidence exists to compute it; absent evidence never
+# counts as clean evidence.
+DECOY_THRESHOLDS: dict[str, float] = {
+    "stale_median_days": 1200.0,
+    "min_dated_items": 3.0,
+    "aio_min_reference_sites": 3.0,
+    "aio_overlap_max": 0.15,
+    "pull_overlap_max": 0.5,
+    "incumbent_overlap_max": 0.2,
+    "filler_traffic_max": 50.0,
+    "filler_share_min": 0.5,
+    "min_signals": 1.0,
+}
+
+_TWO_LEVEL_SUFFIXES = frozenset({
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp",
+    "com.br", "com.mx", "co.in", "co.za", "com.sg", "com.tr",
+})
+
+
+def site_key(domain_or_url: Any) -> str | None:
+    """Registrable-ish site key: lowercased host without www and subdomains."""
+    if not isinstance(domain_or_url, str) or not domain_or_url.strip():
+        return None
+    raw = domain_or_url.strip().lower()
+    host = urlparse(raw).hostname if "://" in raw else raw.split("/", 1)[0]
+    if not host:
+        return None
+    host = host.split(":", 1)[0].removeprefix("www.").strip(".")
+    labels = [label for label in host.split(".") if label]
+    if len(labels) < 2:
+        return host or None
+    if ".".join(labels[-2:]) in _TWO_LEVEL_SUFFIXES and len(labels) >= 3:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+_GOOGLE_KEYS = {"google.com"}
+_NAME_SPLIT_RE = re.compile(r"[\u00b7|\u2022\-\u2013\u2014:]")
+
+
+def organic_item_site_key(entry: dict[str, Any]) -> str | None:
+    """Site key for one organic item, robust to Google /goto wrapping.
+
+    Order: resolved_domain, then a non-Google domain or URL, then the breadcrumb host, then a
+    `website_name` slug such as `reddit` (Google sometimes shows only a site name).
+    Never returns `google.com` for a wrapped result.
+    """
+    if not isinstance(entry, dict):
+        return None
+    for candidate in (entry.get("resolved_domain"), entry.get("domain"), entry.get("url")):
+        if is_goto_wrapped_url(candidate):
+            continue
+        key = site_key(candidate)
+        if key and key not in _GOOGLE_KEYS:
+            return key
+    target = extract_breadcrumb_target(entry.get("breadcrumb"), entry.get("website_name"))
+    key = site_key(target.get("host"))
+    if key and key not in _GOOGLE_KEYS:
+        return key
+    name = entry.get("website_name")
+    if isinstance(name, str) and name.strip():
+        head = _NAME_SPLIT_RE.split(name.replace("\u00a0", " "), maxsplit=1)[0]
+        slug = re.sub(r"[^a-z0-9]", "", head.lower())
+        if slug:
+            return slug
+    return None
+
+
+def organic_site_keys(result_block: dict[str, Any], *, limit: int = 10) -> list[str]:
+    """Ordered unique site keys of the first `limit` organic items."""
+    keys: list[str] = []
+    items = result_block.get("items") if isinstance(result_block, dict) else None
+    for entry in items if isinstance(items, list) else []:
+        if not isinstance(entry, dict) or entry.get("type") != "organic":
+            continue
+        key = organic_item_site_key(entry)
+        if key and key not in keys:
+            keys.append(key)
+        if len(keys) >= limit:
+            break
+    return keys
+
+
+def _collect_reference_sites(node: Any, out: list[str]) -> None:
+    if isinstance(node, dict):
+        refs = node.get("references")
+        if isinstance(refs, list):
+            for ref in refs:
+                if isinstance(ref, dict):
+                    key = site_key(ref.get("domain") or ref.get("url"))
+                    if key and key not in out:
+                        out.append(key)
+        for value in node.values():
+            if isinstance(value, (dict, list)):
+                _collect_reference_sites(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            _collect_reference_sites(value, out)
+
+
+def _parse_dfs_time(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+        try:
+            parsed = datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return None
+
+
+def overlap_ratio(a: list[str], b: list[str]) -> float | None:
+    """Share of `a` present in `b` (None when `a` is empty)."""
+    if not a:
+        return None
+    pool = set(b)
+    return round(sum(1 for key in a if key in pool) / len(a), 4)
+
+
+def _decide_decoy(signals: dict[str, Any], thresholds: dict[str, float]) -> tuple[bool, list[str]]:
+    fired = [name for name, sig in signals.items() if isinstance(sig, dict) and sig.get("fired") is True]
+    return len(fired) >= max(1, int(thresholds.get("min_signals", 1))), fired
+
+
+def _decoy_reason(name: str, sig: dict[str, Any]) -> str:
+    if name == "stale_results":
+        return f"Median dated organic result age {sig.get('median_age_days')}d exceeds {sig.get('threshold_days')}d"
+    if name == "aio_organic_disjoint":
+        return (f"AI Overview cites {sig.get('reference_sites')} sites but only {sig.get('overlap')} of them "
+                "appear in organic top 20 (AIO stays real while organics are swapped)")
+    if name == "pull_instability":
+        return f"Top-10 site overlap vs an independent second pull is {sig.get('overlap')}"
+    if name == "incumbent_mismatch":
+        return f"Top-10 site overlap vs known incumbents is {sig.get('overlap')}"
+    if name == "filler_traffic":
+        return f"{sig.get('filler_share')} of top-10 sites have estimated traffic <= {sig.get('threshold')}"
+    return name
+
+
+def assess_decoy_signals(
+    result_block: dict[str, Any],
+    *,
+    task_data: dict[str, Any] | None = None,
+    second_pull_sites: list[str] | None = None,
+    incumbent_sites: list[str] | None = None,
+    site_traffic: dict[str, float] | None = None,
+    thresholds: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Score decoy-SERP signals for one organic result block (offline; extra evidence optional)."""
+    th = dict(DECOY_THRESHOLDS)
+    if thresholds:
+        th.update(thresholds)
+    items = result_block.get("items") if isinstance(result_block, dict) else None
+    items = items if isinstance(items, list) else []
+    organic = [i for i in items if isinstance(i, dict) and i.get("type") == "organic"]
+    from_web = sum(1 for i in organic if isinstance(i.get("checks"), list) and "from_web" in i["checks"])
+    top10 = organic_site_keys(result_block, limit=10)
+    top20 = organic_site_keys(result_block, limit=20)
+    signals: dict[str, Any] = {}
+
+    now = _parse_dfs_time(result_block.get("datetime")) or datetime.now(timezone.utc)
+    ages = []
+    for item in organic[:10]:
+        stamp = _parse_dfs_time(item.get("timestamp"))
+        if stamp is not None:
+            ages.append(max(0.0, (now - stamp).total_seconds() / 86400.0))
+    if len(ages) >= int(th["min_dated_items"]):
+        ages.sort()
+        mid = len(ages) // 2
+        median = ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2
+        signals["stale_results"] = {"fired": median > th["stale_median_days"], "median_age_days": round(median, 1),
+                                    "dated_items": len(ages), "threshold_days": th["stale_median_days"]}
+
+    aio_sites: list[str] = []
+    for entry in items:
+        if isinstance(entry, dict) and entry.get("type") == "ai_overview":
+            _collect_reference_sites(entry, aio_sites)
+    if len(aio_sites) >= int(th["aio_min_reference_sites"]) and top20:
+        ratio = overlap_ratio(aio_sites, top20)
+        signals["aio_organic_disjoint"] = {"fired": ratio is not None and ratio <= th["aio_overlap_max"],
+                                           "overlap": ratio, "reference_sites": len(aio_sites),
+                                           "threshold": th["aio_overlap_max"]}
+
+    if second_pull_sites is not None and top10:
+        ratio = overlap_ratio(top10, list(second_pull_sites))
+        signals["pull_instability"] = {"fired": ratio is not None and ratio <= th["pull_overlap_max"],
+                                       "overlap": ratio, "threshold": th["pull_overlap_max"]}
+    if incumbent_sites and top10:
+        ratio = overlap_ratio(top10, [k for k in (site_key(s) for s in incumbent_sites) if k])
+        signals["incumbent_mismatch"] = {"fired": ratio is not None and ratio <= th["incumbent_overlap_max"],
+                                         "overlap": ratio, "threshold": th["incumbent_overlap_max"]}
+    if site_traffic and top10:
+        known = [k for k in top10 if isinstance(site_traffic.get(k), (int, float))]
+        if len(known) >= 3:
+            filler = sum(1 for k in known if float(site_traffic[k]) <= th["filler_traffic_max"])
+            share = round(filler / len(known), 4)
+            signals["filler_traffic"] = {"fired": share >= th["filler_share_min"], "filler_share": share,
+                                         "sites_scored": len(known), "threshold": th["filler_traffic_max"]}
+
+    suspect, fired = _decide_decoy(signals, th)
+    resolve_requested = bool(isinstance(task_data, dict) and task_data.get("resolve_poisoned_results") is True)
+    if from_web:
+        provider = "resolved"
+    elif resolve_requested:
+        # DFS is fail-open: zero from_web means clean OR the reference fetch failed.
+        provider = "requested_no_swap"
+    else:
+        provider = "not_requested"
+    return {
+        "suspect": suspect,
+        "fired": fired,
+        "signals": signals,
+        "signals_evaluated": len(signals),
+        "from_web_count": from_web,
+        "provider_resolve": provider,
+        "reasons": [_decoy_reason(name, signals[name]) for name in fired],
+    }
+
+
+def apply_decoy_assessment(integrity: dict[str, Any], decoy: dict[str, Any]) -> dict[str, Any]:
+    """Merge a decoy assessment into serp_integrity; suspect_poisoned keeps precedence."""
+    previous = integrity.get("decoy") if isinstance(integrity.get("decoy"), dict) else {}
+    stale = set(previous.get("reasons") or [])
+    integrity["reasons"] = [r for r in integrity.get("reasons") or [] if r not in stale]
+    integrity["decoy"] = decoy
+    if integrity.get("status") == "suspect_poisoned":
+        return integrity
+    if decoy.get("suspect"):
+        integrity["status"] = "suspect_decoy"
+        integrity["reasons"].extend(decoy["reasons"])
+    elif integrity.get("status") == "suspect_decoy":
+        integrity["status"] = "clean"
+    return integrity

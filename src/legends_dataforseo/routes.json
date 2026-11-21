@@ -1,6 +1,6 @@
 {
   "schema": "legends-dataforseo-routes/v1",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "routes": [
     {
       "name": "whoami",
@@ -285,6 +285,24 @@
         "base_usd": 0.012,
         "depth_unit": null,
         "item_usd": 0.00012,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "bulk-traffic",
+      "aliases": [
+        "site-traffic"
+      ],
+      "kind": "api",
+      "method": "POST",
+      "path": "/dataforseo_labs/google/bulk_traffic_estimation/live",
+      "family": "labs",
+      "charged": true,
+      "summary": "Estimated organic traffic for up to 1000 target domains (decoy filler-site signal)",
+      "estimate": {
+        "base_usd": 0.01,
+        "depth_unit": null,
+        "item_usd": 0.0001,
         "note": "Baseline estimate only; verify current pricing and request options."
       }
     },

@@ -13,7 +13,7 @@ from . import __version__
 from .client import (MAX_RESPONSE_BYTES, ApiError, CredentialError, RouteError,
                      _safe_local_path, api_request, competitors, credential_status,
                      estimate_cost, load_routes, ranked_keywords, relevant_pages,
-                     route_for, normalize_path, serp)
+                     route_for, normalize_path, resolve_poisoned_default, serp)
 from .documentation import DocumentationError, docs_index, docs_read, docs_search, docs_sections
 from .output import ResponseFile, response_view, validate_view
 from .tasks import retrieval_path, wait_task
@@ -90,6 +90,10 @@ def main(argv=None) -> int:
                                  help="Automatic retries when SearchGuard poison canaries are detected")
             command.add_argument("--labs-fallback", action="store_true",
                                  help="Cross-verify SERP competitors via DataForSEO Labs when wrapped or poisoned")
+            command.add_argument("--no-resolve-poisoned", action="store_true",
+                                 help="Do not send resolve_poisoned_results (default on; costs one extra SERP page)")
+            command.add_argument("--decoy-traffic-check", action="store_true",
+                                 help="Score top-10 filler sites with cached Labs bulk traffic (paid when not cached)")
         if name in ("competitors", "ranked-keywords", "relevant-pages"):
             command.add_argument("--item-limit", type=int, default=20 if name == "competitors" else 100,
                                  help="Maximum Lab items to request in task payload")
@@ -239,6 +243,9 @@ def _run(args):
                     task["device"] = args.device
                 if getattr(args, "os", None):
                     task["os"] = args.os
+                if (args.command == "serp" and not getattr(args, "no_resolve_poisoned", False)
+                        and resolve_poisoned_default()):
+                    task["resolve_poisoned_results"] = True
             payload, method = [task], "POST"
         if not args.execute:
             result = {"preview": True, "path": path, "method": method, "body": payload,
@@ -257,6 +264,8 @@ def _run(args):
                     os=getattr(args, "os", None),
                     max_poison_retries=getattr(args, "max_poison_retries", 2),
                     labs_fallback=getattr(args, "labs_fallback", False),
+                    resolve_poisoned_results=False if getattr(args, "no_resolve_poisoned", False) else None,
+                    decoy_traffic_check=getattr(args, "decoy_traffic_check", False),
                     confirm=True,
                     timeout=args.timeout,
                     consumer="cli",
