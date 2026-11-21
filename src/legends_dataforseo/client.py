@@ -7,6 +7,8 @@ import json
 import math
 import os
 import re
+import threading
+import time
 import warnings
 from http.client import HTTPException
 from dataclasses import dataclass, field
@@ -59,6 +61,10 @@ class ApiError(RuntimeError):
 
 class CostLimitError(ApiError):
     """A request was refused before HTTP by a local cost/confirmation guard."""
+
+
+class UnverifiedSerpError(ApiError):
+    """serp() could not verify the SERP (fail closed). `.response` holds the stamped envelope."""
 
 
 class RouteError(ValueError):
@@ -209,7 +215,7 @@ def _append_ledger(path: str, result: dict[str, Any], consumer: str) -> None:
 def api_request(
     path: str, payload: list[dict[str, Any]] | None = None, *,
     method: str | None = None, body: list[dict[str, Any]] | None = None,
-    credentials: Credentials | None = None, timeout: float = 90,
+    credentials: Credentials | None = None, timeout: float | None = None,
     log_cost: bool = False, confirm: bool = False, consumer: str = "python",
     estimated_cost_usd: float | None = None, max_cost_usd: float | None = None,
 ) -> dict[str, Any]:
@@ -238,6 +244,8 @@ def api_request(
         raise RouteError("Live SERP requests accept one task per call.")
     if verb == "POST" and standard_path.startswith("/serp/") and standard_path.endswith("/task_post") and len(payload) > 100:
         raise RouteError("SERP queue requests accept at most 100 tasks per call.")
+    if timeout is None:
+        timeout = SERP_TIMEOUT_S if standard_path.startswith("/serp/") else 90.0
     timeout = _money(timeout, "timeout")
     if timeout == 0:
         raise ValueError("timeout must be positive")
@@ -245,6 +253,13 @@ def api_request(
         raise ValueError("confirm must be a boolean")
     if (verb == "POST" or not _known_free_get(normalized)) and not confirm:
         raise CostLimitError("Paid or unclassified requests require confirm=True before HTTP.")
+    resolve_sent: bool | None = None
+    if verb == "POST" and _is_organic_task_path(standard_path):
+        payload, injected = _enforce_resolve(payload)
+        resolve_sent = all(task.get("resolve_poisoned_results") is True for task in payload)
+        if injected and estimated_cost_usd is not None:
+            surcharge = float(estimate_cost("serp", tasks=1, depth=10)["estimated_cost_usd"] or 0.002)
+            estimated_cost_usd = round(_money(estimated_cost_usd, "estimated_cost_usd") + surcharge * injected, 6)
     estimate = None if estimated_cost_usd is None else _money(estimated_cost_usd, "estimated_cost_usd")
     limit = None if max_cost_usd is None else _money(max_cost_usd, "max_cost_usd")
     if limit is not None:
@@ -304,21 +319,72 @@ def api_request(
     if result.get("status_code") != 20000:
         raise ApiError("DataForSEO rejected the response envelope; inspect ApiError.response.", response=result)
     if standard_path.startswith("/serp/google/organic/"):
-        from .serp_integrity import normalize_serp_envelope
+        from .serp_integrity import normalize_serp_envelope, stamp_envelope_verified
         normalize_serp_envelope(result, endpoint=standard_path)
+        # Raw calls skip serp()'s verification pull, so only provider-resolved blocks verify.
+        stamp_envelope_verified(result, verification={"status": "not_run"}, resolve_sent=resolve_sent)
     return result
 
 
-RESOLVE_POISONED_ENV = "LEGENDS_DATAFORSEO_RESOLVE_POISONED"
+# Resolved pulls can take 66 s+; never let a timeout turn protection into a transport error.
+SERP_TIMEOUT_S = 300.0
+_ORGANIC_TASK_RE = re.compile(r"^/serp/google/organic/(?:live/(?:advanced|regular|html)|task_post)$")
+
+
+def _is_organic_task_path(standard_path: str) -> bool:
+    return bool(_ORGANIC_TASK_RE.match(standard_path))
+
+
+def _web_mode(task: dict[str, Any]) -> bool:
+    text = " ".join(str(task.get(k) or "") for k in ("url", "search_param")).lower()
+    return "udm=14" in text or "udm=web" in text
+
+
+def _enforce_resolve(payload: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Every Google organic task carries resolve_poisoned_results=true unless the escape hatch is set."""
+    from .serp_integrity import ALLOW_POISONED_ENV, allow_poisoned
+    escape = allow_poisoned()
+    out: list[dict[str, Any]] = []
+    injected = 0
+    for task in payload:
+        body = dict(task)
+        value = body.get("resolve_poisoned_results", None)
+        if _web_mode(body) and not escape:
+            raise RouteError("udm=14 / udm=web cannot be combined with resolve_poisoned_results; such tasks bypass "
+                             f"decoy defense and need {ALLOW_POISONED_ENV}=1 (results are stamped unprotected).")
+        if value is None and not _web_mode(body):
+            body["resolve_poisoned_results"] = True
+            injected += 1
+        elif value is not True and not escape:
+            raise RouteError("Google organic SERP tasks must send resolve_poisoned_results=true (decoy defense). "
+                             f"Set {ALLOW_POISONED_ENV}=1 to send unprotected tasks; results are stamped unprotected.")
+        out.append(body)
+    return out, injected
+
+
 _DECOY_STATUSES = frozenset({"suspect_poisoned", "suspect_decoy"})
+# DataForSEO transient task errors (40101 "Internal SE Server Error", seen on ~12% of bench pulls and
+# reproducibly on concurrent same-keyword requests). Errored tasks report cost 0.
+TRANSIENT_TASK_CODES = frozenset({40101})
+TRANSIENT_BACKOFF_S = (2.0, 5.0, 10.0)
+_sleep = time.sleep
+_SERP_KEY_GUARD = threading.Lock()
+_SERP_KEY_LOCKS: dict[str, threading.Lock] = {}
 
 
 def resolve_poisoned_default() -> bool:
-    """0.1.12: Google organic SERPs request resolve_poisoned_results unless the env opts out."""
-    value = os.environ.get(RESOLVE_POISONED_ENV)
-    if value is None or not value.strip():
-        return True
-    return value.strip().lower() not in {"0", "false", "off", "no"}
+    """0.1.12: resolve_poisoned_results is mandatory on Google organic SERPs (always True).
+
+    The only way to send a task without it is LEGENDS_DFS_ALLOW_POISONED=1 plus an explicit
+    resolve_poisoned_results=False, and those results are stamped unprotected.
+    """
+    return True
+
+
+def _serp_key_lock(keyword: Any) -> threading.Lock:
+    key = " ".join(str(keyword).lower().split())
+    with _SERP_KEY_GUARD:
+        return _SERP_KEY_LOCKS.setdefault(key, threading.Lock())
 
 
 def _serp_integrities(envelope: dict[str, Any]) -> list[dict[str, Any]]:
@@ -334,6 +400,8 @@ def _serp_integrities(envelope: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _serp_status(envelope: dict[str, Any]) -> str:
     statuses = [i.get("status") for i in _serp_integrities(envelope)]
+    if "unverified_decoy" in statuses:
+        return "unverified_decoy"
     if "suspect_poisoned" in statuses:
         return "suspect_poisoned"
     if "suspect_decoy" in statuses:
@@ -449,7 +517,17 @@ def site_traffic(
     return fresh
 
 
-def serp(
+def serp(keyword: str, **options: Any) -> dict[str, Any]:
+    """Fail-closed Google organic SERP; see _serp_impl for parameters.
+
+    Same-keyword calls are serialized in-process (concurrent same-keyword DataForSEO requests
+    reproducibly return 40101).
+    """
+    with _serp_key_lock(keyword):
+        return _serp_impl(keyword, **options)
+
+
+def _serp_impl(
     keyword: str,
     *,
     location_code: int | None = 2840,
@@ -463,21 +541,20 @@ def serp(
     labs_fallback: bool = False,
     resolve_poisoned_results: bool | None = None,
     incumbent_sites: list[str] | None = None,
-    decoy_traffic_check: bool = False,
     verify_no_swap: bool = True,
+    allow_unverified: bool = False,
     **request_options: Any,
 ) -> dict[str, Any]:
-    """One Google organic live task with /goto unmasking, provider poison resolve and decoy re-pull.
+    """One fail-closed Google organic live task (resolve mandatory, decoy re-pull, verification pull).
 
-    resolve_poisoned_results defaults to True (env LEGENDS_DATAFORSEO_RESOLVE_POISONED=0 opts out).
-    A SERP still marked suspect_decoy/suspect_poisoned after the retry budget is returned with
-    serp_integrity.unresolved=True; it is never relabelled clean.
-
-    DFS resolve is fail-open (a failed Web-mode reference returns the original page), so a
-    resolve-requested SERP with zero `from_web` swaps gets one verification pull when
-    verify_no_swap is True: a swap on the second pull is adopted, a top-10 disagreement marks
-    the SERP suspect_decoy, and agreement marks it verified. Anything not proven is flagged
-    serp_integrity.unverified=True rather than presented as verified clean.
+    resolve_poisoned_results is always sent. resolve_poisoned_results=False is refused unless
+    LEGENDS_DFS_ALLOW_POISONED=1, and such results are stamped integrity "unprotected".
+    Pipeline: resolve pull -> decoy detector -> suspect: re-pull with resolve (max_poison_retries,
+    cumulative max_cost_usd) -> resolve fail-open (no swaps): one verification pull -> stamp
+    serp_integrity.verified. A SERP still suspect ends as status unverified_decoy (decoy flavor)
+    or suspect_poisoned with unresolved=True; it is never relabelled clean.
+    Fail closed: an unverified protected SERP raises UnverifiedSerpError (the stamped envelope is
+    on `.response`) unless allow_unverified=True. 40101 task errors are retried with backoff.
     """
     import time as _time
     from .serp_integrity import (
@@ -492,10 +569,16 @@ def serp(
         raise ValueError("max_poison_retries must be a nonnegative integer")
     if type(verify_no_swap) is not bool:
         raise ValueError("verify_no_swap must be a boolean")
-    if resolve_poisoned_results is None:
-        resolve = resolve_poisoned_default()
-    elif type(resolve_poisoned_results) is bool:
-        resolve = resolve_poisoned_results
+    if type(allow_unverified) is not bool:
+        raise ValueError("allow_unverified must be a boolean")
+    from .serp_integrity import ALLOW_POISONED_ENV, allow_poisoned, stamp_verified
+    if resolve_poisoned_results is None or resolve_poisoned_results is True:
+        resolve = True
+    elif resolve_poisoned_results is False:
+        if not allow_poisoned():
+            raise ValueError("resolve_poisoned_results=False is refused (decoy defense is mandatory). Set "
+                             f"{ALLOW_POISONED_ENV}=1 to pull an unprotected SERP; it is stamped unprotected.")
+        resolve = False
     else:
         raise ValueError("resolve_poisoned_results must be a boolean or None")
     task: dict[str, Any] = {"keyword": keyword}
@@ -549,28 +632,36 @@ def serp(
         return default_est
 
     def _run(body: dict[str, Any], opts: dict[str, Any], reason: str) -> dict[str, Any]:
-        started = _time.perf_counter()
-        envelope = api_request(path, [body], **opts)
-        latency = round((_time.perf_counter() - started) * 1000.0, 1)
-        reported = envelope.get("cost")
-        attempts.append({
-            "attempt": len(attempts) + 1,
-            "reason": reason,
-            "task_ids": [str(t["id"]) for t in (envelope.get("tasks") or []) if isinstance(t, dict) and t.get("id")],
-            "resolve_poisoned_results": body.get("resolve_poisoned_results") is True,
-            "cost_usd": reported if isinstance(reported, (int, float)) and not isinstance(reported, bool) else None,
-            "latency_ms": latency,
-            "status": _serp_status(envelope),
-        })
+        for transient_try in range(len(TRANSIENT_BACKOFF_S) + 1):
+            started = _time.perf_counter()
+            envelope = api_request(path, [body], **opts)
+            latency = round((_time.perf_counter() - started) * 1000.0, 1)
+            reported = envelope.get("cost")
+            tasks = [t for t in (envelope.get("tasks") or []) if isinstance(t, dict)]
+            codes = [t.get("status_code") for t in tasks]
+            transient = bool(codes) and all(c in TRANSIENT_TASK_CODES for c in codes)
+            attempts.append({
+                "attempt": len(attempts) + 1,
+                "reason": reason if transient_try == 0 else f"{reason}:transient_retry_{transient_try}",
+                "task_ids": [str(t["id"]) for t in tasks if t.get("id")],
+                "task_status_codes": codes,
+                "resolve_poisoned_results": body.get("resolve_poisoned_results") is True,
+                "cost_usd": reported if isinstance(reported, (int, float)) and not isinstance(reported, bool) else None,
+                "latency_ms": latency,
+                "status": _serp_status(envelope),
+            })
+            if not transient or transient_try == len(TRANSIENT_BACKOFF_S):
+                return envelope
+            _sleep(TRANSIENT_BACKOFF_S[transient_try])
         return envelope
 
-    if resolve:
-        task["resolve_poisoned_results"] = True
+    # Explicit False under the escape hatch; api_request would otherwise inject True.
+    task["resolve_poisoned_results"] = resolve
     result = _run(task, first_opts, "initial")
     spent_usd = _step_spend(result, serp_step_estimate)
     budget_exhausted = False
 
-    attempt_ids = list(attempts[0]["task_ids"])
+    attempt_ids = [tid for a in attempts for tid in a["task_ids"]]
     retries_used = 0
     previous_top10: list[str] | None = None
     while _serp_status(result) in _DECOY_STATUSES and retries_used < max_poison_retries:
@@ -720,25 +811,9 @@ def serp(
                         if isinstance(r, dict) and isinstance(r.get("items"), list):
                             labs_items.extend(i for i in r["items"] if isinstance(i, dict))
 
-    # Optional extra decoy evidence (caller-supplied incumbents, cached Labs traffic).
+    # Optional caller evidence: known incumbents.
     final_block = _serp_first_block(result)
-    traffic: dict[str, float] | None = None
-    if decoy_traffic_check and final_block is not None:
-        top10 = organic_site_keys(final_block, limit=10)
-        traffic_floor = float(estimate_cost("bulk-traffic", tasks=1, items=len(top10))["estimated_cost_usd"] or 0.011)
-        traffic_opts = dict(request_options)
-        if traffic_opts.get("max_cost_usd") is not None:
-            remaining_max = round(_money(traffic_opts["max_cost_usd"], "max_cost_usd") - spent_usd, 6)
-            if remaining_max < traffic_floor:
-                budget_exhausted = True
-                traffic_opts = None
-            else:
-                traffic_opts["max_cost_usd"] = remaining_max
-                traffic_opts["estimated_cost_usd"] = traffic_floor
-        if traffic_opts is not None:
-            traffic = site_traffic(top10, location_code=2840 if location_code is None else location_code,
-                                   language_code=language_code, **traffic_opts)
-    if final_block is not None and (incumbent_sites or traffic):
+    if final_block is not None and incumbent_sites:
         integrity = final_block.get("serp_integrity")
         if isinstance(integrity, dict):
             task_data = None
@@ -748,9 +823,10 @@ def serp(
                     break
             apply_decoy_assessment(integrity, assess_decoy_signals(
                 final_block, task_data=task_data, second_pull_sites=verify_top10,
-                incumbent_sites=incumbent_sites, site_traffic=traffic))
+                incumbent_sites=incumbent_sites))
             attempts[-1]["status"] = _serp_status(result)
 
+    attempt_ids = [tid for a in attempts for tid in a["task_ids"]]
     if retries_used > 0 or labs_items is not None or budget_exhausted:
         _attach_serp_retry_metadata(
             result,
@@ -774,16 +850,20 @@ def serp(
         if repull_overlap is not None:
             integrity["repull_top10_overlap"] = repull_overlap
         integrity["verification"] = verification
+        integrity.pop("unverified", None)
         if final_status in _DECOY_STATUSES:
             integrity["unresolved"] = True
-        elif not (
-            (integrity.get("decoy") or {}).get("provider_resolve") == "resolved"
-            or verification.get("status") == "stable"
-        ):
-            # Clean by heuristics only: resolve off, verification skipped/failed. Not proven.
-            integrity["unverified"] = True
+            if integrity.get("status") == "suspect_decoy":
+                integrity["detected_status"] = "suspect_decoy"
+                integrity["status"] = "unverified_decoy"
+        stamp_verified(integrity, verification=verification, unprotected=not attempts[-1]["resolve_poisoned_results"])
+    blocks = _serp_integrities(result)
+    verified = bool(blocks) and all(b.get("verified") is True for b in blocks)
+    final_status = _serp_status(result) if blocks else "no_organic_result"
     result["legends_serp"] = {
         "resolve_poisoned_results_default": resolve,
+        "integrity": "protected" if attempts[-1]["resolve_poisoned_results"] else "unprotected",
+        "verified": verified,
         "verification": verification,
         "attempts": attempts,
         "final_status": final_status,
@@ -792,6 +872,13 @@ def serp(
         "latency_ms_total": total_latency,
         "budget_exhausted": budget_exhausted,
     }
+    if not verified and resolve and not allow_unverified:
+        reasons = sorted({r for b in blocks for r in b.get("unverified_reasons") or []}) or [
+            "no organic result block to verify"]
+        raise UnverifiedSerpError(
+            f"SERP for {keyword!r} is not verified ({final_status}); refusing to return it. "
+            "Reasons: " + "; ".join(reasons) + ". Pass allow_unverified=True only to inspect it.",
+            response=result, request_may_have_completed=True)
     return result
 
 

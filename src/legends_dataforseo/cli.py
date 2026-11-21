@@ -14,6 +14,7 @@ from .client import (MAX_RESPONSE_BYTES, ApiError, CredentialError, RouteError,
                      _safe_local_path, api_request, competitors, credential_status,
                      estimate_cost, load_routes, ranked_keywords, relevant_pages,
                      route_for, normalize_path, resolve_poisoned_default, serp)
+from .serp_integrity import allow_poisoned
 from .documentation import DocumentationError, docs_index, docs_read, docs_search, docs_sections
 from .output import ResponseFile, response_view, validate_view
 from .tasks import retrieval_path, wait_task
@@ -42,7 +43,8 @@ def _execution_flags(parser):
     parser.add_argument("--execute", action="store_true", help="Confirm this request may incur charges")
     parser.add_argument("--estimated-cost-usd", type=float, help="Reviewed estimate for this entire request")
     parser.add_argument("--max-cost-usd", type=float, help="Local preflight ceiling; not a provider billing cap")
-    parser.add_argument("--timeout", type=float, default=90)
+    parser.add_argument("--timeout", type=float, default=None,
+                        help="Seconds; default 300 for SERP paths (resolved pulls can take 66 s+), else 90")
     _output_flags(parser)
 
 
@@ -91,9 +93,10 @@ def main(argv=None) -> int:
             command.add_argument("--labs-fallback", action="store_true",
                                  help="Cross-verify SERP competitors via DataForSEO Labs when wrapped or poisoned")
             command.add_argument("--no-resolve-poisoned", action="store_true",
-                                 help="Do not send resolve_poisoned_results (default on; costs one extra SERP page)")
-            command.add_argument("--decoy-traffic-check", action="store_true",
-                                 help="Score top-10 filler sites with cached Labs bulk traffic (paid when not cached)")
+                                 help="UNPROTECTED: skip resolve_poisoned_results; refused unless "
+                                      "LEGENDS_DFS_ALLOW_POISONED=1, results stamped unprotected")
+            command.add_argument("--allow-unverified", action="store_true",
+                                 help="Return an unverified SERP (verified=false) instead of failing closed")
         if name in ("competitors", "ranked-keywords", "relevant-pages"):
             command.add_argument("--item-limit", type=int, default=20 if name == "competitors" else 100,
                                  help="Maximum Lab items to request in task payload")
@@ -243,9 +246,14 @@ def _run(args):
                     task["device"] = args.device
                 if getattr(args, "os", None):
                     task["os"] = args.os
-                if (args.command == "serp" and not getattr(args, "no_resolve_poisoned", False)
-                        and resolve_poisoned_default()):
-                    task["resolve_poisoned_results"] = True
+                if args.command == "serp":
+                    if getattr(args, "no_resolve_poisoned", False):
+                        if not allow_poisoned():
+                            raise RouteError("--no-resolve-poisoned is refused: decoy defense is mandatory. Set "
+                                             "LEGENDS_DFS_ALLOW_POISONED=1 for an unprotected pull.")
+                        task["resolve_poisoned_results"] = False
+                    else:
+                        task["resolve_poisoned_results"] = resolve_poisoned_default()
             payload, method = [task], "POST"
         if not args.execute:
             result = {"preview": True, "path": path, "method": method, "body": payload,
@@ -265,7 +273,7 @@ def _run(args):
                     max_poison_retries=getattr(args, "max_poison_retries", 2),
                     labs_fallback=getattr(args, "labs_fallback", False),
                     resolve_poisoned_results=False if getattr(args, "no_resolve_poisoned", False) else None,
-                    decoy_traffic_check=getattr(args, "decoy_traffic_check", False),
+                    allow_unverified=getattr(args, "allow_unverified", False),
                     confirm=True,
                     timeout=args.timeout,
                     consumer="cli",

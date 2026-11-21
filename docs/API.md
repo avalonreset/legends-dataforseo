@@ -6,7 +6,7 @@ Public import: `legends_dataforseo`. Package: `legends-dataforseo`.
 ```python
 api_request(
     path, payload=None, *, method=None, body=None,
-    credentials=None, timeout=90, log_cost=False, confirm=False,
+    credentials=None, timeout=None, log_cost=False, confirm=False,
     consumer="python", estimated_cost_usd=None, max_cost_usd=None,
 ) -> dict
 
@@ -14,7 +14,7 @@ serp(keyword, *, location_code=2840, location_name=None,
      location_coordinate=None, language_code="en", depth=10,
      device=None, os=None, max_poison_retries=2, labs_fallback=False,
      resolve_poisoned_results=None, incumbent_sites=None,
-     decoy_traffic_check=False, verify_no_swap=True, **request_options) -> dict
+     verify_no_swap=True, allow_unverified=False, **request_options) -> dict
 demand(keywords, *, location_code=2840, language_code="en",
        **request_options) -> dict
 competitors(keywords, *, location_code=2840, language_code="en", limit=20,
@@ -109,30 +109,54 @@ Organic SERP integrity helpers: `is_goto_wrapped_url(url)`,
 Decoy SERP helpers (0.1.12): `DECOY_THRESHOLDS`, `site_key(domain_or_url)`,
 `organic_item_site_key(item)`, `organic_site_keys(result_block, *, limit=10)`, `overlap_ratio(a, b)`,
 `assess_decoy_signals(result_block, *, task_data=None, second_pull_sites=None,
-incumbent_sites=None, site_traffic=None, thresholds=None)`,
-`apply_decoy_assessment(integrity, decoy)`, `resolve_poisoned_default()`, and
-`site_traffic(sites, *, location_code=2840, language_code="en", max_age_days=30,
-**request_options)` (paid Labs bulk traffic estimation, cached locally).
+incumbent_sites=None, thresholds=None)`,
+`apply_decoy_assessment(integrity, decoy)`, `stamp_verified(integrity, *,
+verification=None, unprotected=False)`, `stamp_envelope_verified(envelope, *,
+verification=None, resolve_sent=None)`, `resolve_poisoned_default()`,
+`allow_poisoned()`, `ALLOW_POISONED_ENV`, `SERP_TIMEOUT_S`,
+`UnverifiedSerpError`, and `site_traffic(sites, *, location_code=2840,
+language_code="en", max_age_days=30, **request_options)` (paid Labs bulk
+traffic estimation, cached locally; informational, not a decoy signal).
 
-## Decoy SERP defense (0.1.12)
+## Decoy SERP defense (0.1.12, fail closed)
 
-`serp()` sends `resolve_poisoned_results: true` on every Google organic task by
-default. DataForSEO then compares the SERP against a Google Web-mode reference
-page and swaps poisoned organic items; restored items carry `from_web` in their
-`checks` array. It costs one extra SERP page per task whether or not anything
-is swapped, so `serp()` raises its own per-step estimate by one page and refuses
-before HTTP when `max_cost_usd` cannot cover it. Opt out per call with
-`resolve_poisoned_results=False`, or process-wide with
-`LEGENDS_DATAFORSEO_RESOLVE_POISONED=0`. Raw `api_request` never edits your
-payload; add the field yourself there.
+Google serves some automated clients a decoy SERP: plausible-looking organic
+results that are not what a person sees. The 2026-11-20 bench (40 keywords)
+found the default pull was a decoy on 35/40 and `resolve_poisoned_results` cut
+that to 3/40, so the defense is mandatory and the library fails closed.
 
-The provider resolve is fail-open: when its reference page cannot be fetched it
-returns the original results unchanged, so zero `from_web` items is not proof of
-a clean page. Every organic `serp_integrity` block therefore also carries a
-`decoy` assessment scored from evidence in the response (median age of dated
-organic results, AI Overview reference sites vs organic top 20) plus optional
-caller evidence (`incumbent_sites`, a second pull, cached Labs traffic via
-`decoy_traffic_check=True`). Signals that cannot be computed are omitted and
+**Resolve is mandatory.** Every Google organic task (`live/advanced`,
+`live/regular`, `live/html`, `task_post`) carries
+`resolve_poisoned_results: true`. `serp()` always sends it. Raw `api_request`
+injects it when absent (and raises its estimate by one page per injected task)
+and raises `RouteError` for an explicit non-true value or for `udm=14` /
+`udm=web` tasks, which DataForSEO cannot combine with resolve. The only escape
+hatch is `LEGENDS_DFS_ALLOW_POISONED=1` (`ALLOW_POISONED_ENV`, checked by
+`allow_poisoned()`, exact value `1`), plus an explicit
+`resolve_poisoned_results=False`; the env alone never turns resolve off. Such
+results are stamped `serp_integrity.integrity = "unprotected"` and
+`verified = false`. `resolve_poisoned_default()` always returns True; the old
+`LEGENDS_DATAFORSEO_RESOLVE_POISONED` opt-out is retired and ignored.
+Resolved pulls can take 66 s or more, so SERP paths default to a 300 s timeout
+(`SERP_TIMEOUT_S`; `timeout=None` selects it, other paths keep 90 s).
+
+**Detector.** The provider resolve is fail-open: when its Web-mode reference
+page cannot be fetched it returns the original results unchanged, so zero
+`from_web` items is not proof of a clean page. Every organic `serp_integrity`
+block carries a `decoy` assessment. Signals, with conservative thresholds in
+`DECOY_THRESHOLDS`:
+
+- `aio_organic_disjoint`: the AI Overview cites at least 3 sites
+  (`aio_min_reference_sites`) and at most 60% of them appear in the organic
+  top 20 (`aio_overlap_max = 0.6`). Sites match on brand label, so an AIO
+  `reddit.com` matches a `website_name`-derived `reddit` key.
+- `pull_instability`: a second pull's top-10 overlap is at most
+  `pull_overlap_max = 0.5`.
+- `incumbent_mismatch`: caller-known `incumbent_sites` overlap the top 10 at
+  most `incumbent_overlap_max = 0.2`.
+
+Result age and Labs traffic were tested on the bench and did not separate
+decoys; they are not scored. Signals that cannot be computed are omitted and
 never count as clean evidence. `decoy.provider_resolve` is `resolved`,
 `requested_no_swap` or `not_requested`.
 
@@ -141,26 +165,41 @@ google.com` and no `timestamp`. Site keys therefore come from
 `organic_item_site_key(item)`: resolved domain, then breadcrumb host, then a
 `website_name` slug, and never `google.com`.
 
-Because the provider is fail-open, a resolve-requested SERP that comes back
-clean with zero swaps gets one verification pull (`verify_no_swap=True`,
-default; one more resolve-priced page, cap-checked). A swap on the second pull
-is adopted (`verification.status = resolved_on_verify`). A top-10 site overlap
-at or below `DECOY_THRESHOLDS["pull_overlap_max"]` marks the SERP
-`suspect_decoy` + `unresolved` (`unstable`). Agreement marks it `stable`. Any
-clean result that is neither provider-resolved nor `stable` (resolve off,
-verification disabled, skipped for budget, or failed) carries
-`serp_integrity.unverified=true`. `serp_integrity.verification` and
-`legends_serp.verification` record the outcome.
+**Pipeline in `serp()`.** Resolve pull, then the detector. A `suspect_decoy`
+SERP is re-pulled with resolve within `max_poison_retries` and the cumulative
+`max_cost_usd`. A clean result with zero swaps gets one verification pull
+(`verify_no_swap=True`, default, one more resolve-priced page, cap-checked): a
+swap on that pull is adopted (`resolved_on_verify`), agreement above
+`pull_overlap_max` is `stable`, disagreement is `unstable` and fires
+`pull_instability`. A SERP still suspect at the end gets
+`status = "unverified_decoy"` (with `detected_status = "suspect_decoy"`) or
+stays `suspect_poisoned`, plus `unresolved = true`; it is never relabelled
+`clean`. Transient task code 40101 (seen on concurrent same-keyword requests;
+cost 0) is retried with 2 s, 5 s and 10 s backoff, and `serp()` holds a
+per-process lock per normalized keyword so same-keyword calls run one at a time.
 
-When any signal fires the status becomes `suspect_decoy` (`suspect_poisoned`
-keeps precedence). `serp()` re-pulls a `suspect_decoy` SERP with resolve forced
-on, within `max_poison_retries` and the cumulative `max_cost_usd`. A SERP that is
-still suspect after the budget is returned with `serp_integrity.unresolved=true`;
-it is never relabelled `clean`. The envelope's `legends_serp` block lists every
-attempt with task IDs, resolve flag, provider-reported cost, latency and status,
-plus `cost_usd_total` and `latency_ms_total`. Downstream scrapers (for example
-legends-firecrawl) should refuse URL sets derived from a suspect SERP unless the
-operator overrides.
+**Verified stamp.** `stamp_verified(integrity, *, verification=None,
+unprotected=False)` sets `serp_integrity.verified`, `integrity`
+(`protected`/`unprotected`), `verified_basis` (`provider_resolved`,
+`stable_verification_pull` or None), `signals_used` and `unverified_reasons`
+(and `unverified = true` when not verified). `verified` is true only when the
+task was protected, the block is `clean`, no decoy signal fired, and the block
+was either provider-resolved (`from_web` swaps) or confirmed by a `stable`
+verification pull. `stamp_envelope_verified(envelope, *, verification=None,
+resolve_sent=None)` stamps every organic block of an envelope; raw
+`api_request` uses it with `verification = not_run`, so only provider-resolved
+raw blocks verify.
+
+**Fail closed.** When the final SERP is not verified, `serp()` raises
+`UnverifiedSerpError` (an `ApiError` with the stamped envelope on `.response`
+and `request_may_have_completed = true`). Pass `allow_unverified=True` only to
+inspect it. Unprotected escape-hatch pulls are returned stamped rather than
+raised. The envelope's `legends_serp` block carries `integrity`, `verified`,
+`verification`, every attempt (task IDs, task status codes, resolve flag,
+provider-reported cost, latency, status), `final_status`, `cost_usd_total` and
+`latency_ms_total`. Downstream consumers (legends-firecrawl `scrape-serp`,
+legends-prospector `--serp-file`) refuse any SERP whose
+`serp_integrity.verified` is not true unless the operator overrides.
 
 ## Compatibility
 

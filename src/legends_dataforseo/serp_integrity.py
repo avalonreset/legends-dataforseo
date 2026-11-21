@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime, timezone
 from typing import Any
@@ -294,16 +295,22 @@ def normalize_serp_envelope(
 # only scored when enough evidence exists to compute it; absent evidence never
 # counts as clean evidence.
 DECOY_THRESHOLDS: dict[str, float] = {
-    "stale_median_days": 1200.0,
-    "min_dated_items": 3.0,
+    # AIO backstop (bench: decoys 0.0-0.6, real 0.8-1.0; P=R=1.0 on default rows, n=20).
     "aio_min_reference_sites": 3.0,
-    "aio_overlap_max": 0.15,
+    "aio_overlap_max": 0.6,
     "pull_overlap_max": 0.5,
     "incumbent_overlap_max": 0.2,
-    "filler_traffic_max": 50.0,
-    "filler_share_min": 0.5,
     "min_signals": 1.0,
 }
+
+# The only way to send an organic SERP task without resolve_poisoned_results. Results are
+# stamped serp_integrity.integrity == "unprotected" and verified == False.
+ALLOW_POISONED_ENV = "LEGENDS_DFS_ALLOW_POISONED"
+
+
+def allow_poisoned() -> bool:
+    """True only when the deliberately ugly escape hatch LEGENDS_DFS_ALLOW_POISONED=1 is set."""
+    return os.environ.get(ALLOW_POISONED_ENV, "").strip() == "1"
 
 _TWO_LEVEL_SUFFIXES = frozenset({
     "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp",
@@ -419,8 +426,6 @@ def _decide_decoy(signals: dict[str, Any], thresholds: dict[str, float]) -> tupl
 
 
 def _decoy_reason(name: str, sig: dict[str, Any]) -> str:
-    if name == "stale_results":
-        return f"Median dated organic result age {sig.get('median_age_days')}d exceeds {sig.get('threshold_days')}d"
     if name == "aio_organic_disjoint":
         return (f"AI Overview cites {sig.get('reference_sites')} sites but only {sig.get('overlap')} of them "
                 "appear in organic top 20 (AIO stays real while organics are swapped)")
@@ -428,9 +433,12 @@ def _decoy_reason(name: str, sig: dict[str, Any]) -> str:
         return f"Top-10 site overlap vs an independent second pull is {sig.get('overlap')}"
     if name == "incumbent_mismatch":
         return f"Top-10 site overlap vs known incumbents is {sig.get('overlap')}"
-    if name == "filler_traffic":
-        return f"{sig.get('filler_share')} of top-10 sites have estimated traffic <= {sig.get('threshold')}"
     return name
+
+
+def _brand(key: str) -> str:
+    """First label of a site key, so `reddit.com` (AIO reference) matches a `reddit` website_name slug."""
+    return key.split(".", 1)[0]
 
 
 def assess_decoy_signals(
@@ -439,10 +447,14 @@ def assess_decoy_signals(
     task_data: dict[str, Any] | None = None,
     second_pull_sites: list[str] | None = None,
     incumbent_sites: list[str] | None = None,
-    site_traffic: dict[str, float] | None = None,
     thresholds: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Score decoy-SERP signals for one organic result block (offline; extra evidence optional)."""
+    """Score decoy-SERP signals for one organic result block (offline; extra evidence optional).
+
+    Signals: AI Overview reference overlap with organic top 20 (needs >= 3 cited sites),
+    second-pull top-10 overlap, and caller-known incumbents. Result age and Labs traffic were
+    tested on the 2026-11-20 bench and do not separate decoys, so they are not scored.
+    """
     th = dict(DECOY_THRESHOLDS)
     if thresholds:
         th.update(thresholds)
@@ -454,25 +466,12 @@ def assess_decoy_signals(
     top20 = organic_site_keys(result_block, limit=20)
     signals: dict[str, Any] = {}
 
-    now = _parse_dfs_time(result_block.get("datetime")) or datetime.now(timezone.utc)
-    ages = []
-    for item in organic[:10]:
-        stamp = _parse_dfs_time(item.get("timestamp"))
-        if stamp is not None:
-            ages.append(max(0.0, (now - stamp).total_seconds() / 86400.0))
-    if len(ages) >= int(th["min_dated_items"]):
-        ages.sort()
-        mid = len(ages) // 2
-        median = ages[mid] if len(ages) % 2 else (ages[mid - 1] + ages[mid]) / 2
-        signals["stale_results"] = {"fired": median > th["stale_median_days"], "median_age_days": round(median, 1),
-                                    "dated_items": len(ages), "threshold_days": th["stale_median_days"]}
-
     aio_sites: list[str] = []
     for entry in items:
         if isinstance(entry, dict) and entry.get("type") == "ai_overview":
             _collect_reference_sites(entry, aio_sites)
     if len(aio_sites) >= int(th["aio_min_reference_sites"]) and top20:
-        ratio = overlap_ratio(aio_sites, top20)
+        ratio = overlap_ratio([_brand(k) for k in aio_sites], [_brand(k) for k in top20])
         signals["aio_organic_disjoint"] = {"fired": ratio is not None and ratio <= th["aio_overlap_max"],
                                            "overlap": ratio, "reference_sites": len(aio_sites),
                                            "threshold": th["aio_overlap_max"]}
@@ -485,13 +484,6 @@ def assess_decoy_signals(
         ratio = overlap_ratio(top10, [k for k in (site_key(s) for s in incumbent_sites) if k])
         signals["incumbent_mismatch"] = {"fired": ratio is not None and ratio <= th["incumbent_overlap_max"],
                                          "overlap": ratio, "threshold": th["incumbent_overlap_max"]}
-    if site_traffic and top10:
-        known = [k for k in top10 if isinstance(site_traffic.get(k), (int, float))]
-        if len(known) >= 3:
-            filler = sum(1 for k in known if float(site_traffic[k]) <= th["filler_traffic_max"])
-            share = round(filler / len(known), 4)
-            signals["filler_traffic"] = {"fired": share >= th["filler_share_min"], "filler_share": share,
-                                         "sites_scored": len(known), "threshold": th["filler_traffic_max"]}
 
     suspect, fired = _decide_decoy(signals, th)
     resolve_requested = bool(isinstance(task_data, dict) and task_data.get("resolve_poisoned_results") is True)
@@ -527,3 +519,64 @@ def apply_decoy_assessment(integrity: dict[str, Any], decoy: dict[str, Any]) -> 
     elif integrity.get("status") == "suspect_decoy":
         integrity["status"] = "clean"
     return integrity
+
+
+def stamp_verified(
+    integrity: dict[str, Any],
+    *,
+    verification: dict[str, Any] | None = None,
+    unprotected: bool = False,
+) -> dict[str, Any]:
+    """Set serp_integrity.verified (fail closed) plus the signals and reasons behind it.
+
+    verified is True only when the provider resolve ran, the block is clean, no decoy signal
+    fired, and the result was either provider-resolved (`from_web` swaps) or confirmed by a
+    stable verification pull. DFS resolve is fail-open, so zero swaps alone never verifies.
+    """
+    decoy = integrity.get("decoy") if isinstance(integrity.get("decoy"), dict) else {}
+    status = integrity.get("status")
+    vstatus = (verification or {}).get("status")
+    reasons: list[str] = []
+    if unprotected:
+        reasons.append(f"unprotected: resolve_poisoned_results was not sent ({ALLOW_POISONED_ENV}=1)")
+    if status != "clean":
+        reasons.append(f"serp_integrity.status is {status}")
+    if decoy.get("suspect"):
+        reasons.append("decoy signals fired: " + ", ".join(decoy.get("fired") or []))
+    if decoy.get("provider_resolve") != "resolved" and vstatus != "stable":
+        reasons.append("no from_web swaps and no stable verification pull "
+                       f"(verification: {vstatus or 'not_run'}); DFS resolve is fail-open")
+    verified = not reasons
+    integrity["integrity"] = "unprotected" if unprotected else "protected"
+    integrity["verified"] = verified
+    integrity["verified_basis"] = (
+        "provider_resolved" if verified and decoy.get("provider_resolve") == "resolved"
+        else "stable_verification_pull" if verified else None
+    )
+    integrity["signals_used"] = sorted((decoy.get("signals") or {}).keys())
+    integrity["unverified_reasons"] = reasons
+    if verified:
+        integrity.pop("unverified", None)
+    else:
+        integrity["unverified"] = True
+    return integrity
+
+
+def stamp_envelope_verified(
+    envelope: dict[str, Any],
+    *,
+    verification: dict[str, Any] | None = None,
+    resolve_sent: bool | None = None,
+) -> dict[str, Any]:
+    """Stamp every organic result block of a raw envelope (resolve_sent None: read task data echo)."""
+    if not isinstance(envelope, dict):
+        return envelope
+    for task in envelope.get("tasks") or []:
+        if not isinstance(task, dict):
+            continue
+        data = task.get("data") if isinstance(task.get("data"), dict) else {}
+        sent = resolve_sent if resolve_sent is not None else data.get("resolve_poisoned_results") is True
+        for res_obj in task.get("result") or []:
+            if isinstance(res_obj, dict) and isinstance(res_obj.get("serp_integrity"), dict):
+                stamp_verified(res_obj["serp_integrity"], verification=verification, unprotected=not sent)
+    return envelope

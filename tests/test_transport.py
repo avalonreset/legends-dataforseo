@@ -159,7 +159,7 @@ def test_redirect_handler_blocks_cross_host(monkeypatch):
 def test_named_research_methods(monkeypatch):
     calls = transport(monkeypatch, {"status_code": 20000})
     opts = dict(credentials=AUTH, confirm=True, estimated_cost_usd=0.02, max_cost_usd=0.02)
-    serp("example", **opts)
+    serp("example", allow_unverified=True, **opts)
     demand(["one", "two"], **opts)
     maps("coffee", location_coordinate="40.7128,-74.0060,15z", **opts)
     business("cid:3865327066180748277", **opts)

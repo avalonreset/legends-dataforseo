@@ -60,7 +60,7 @@ status; polling and retry decisions belong to the caller.
 | `--execute` | Send this request; absent means preview. |
 | `--estimated-cost-usd` | Reviewed estimate for the entire request. Required for paid POST execution. |
 | `--max-cost-usd` | Local estimate ceiling, not a provider billing cap. Required for paid POST execution. |
-| `--timeout` | Request timeout in seconds; default 90. |
+| `--timeout` | Request timeout in seconds; default 300 on SERP paths (resolved pulls can take 66 s+), 90 elsewhere. |
 | `--language-code` | Named-helper language code; default `en`. |
 | `--location-code` | SERP/demand/business/Labs location code; default `2840`. |
 | `--location-name` | Optional canonical location name for `serp` and `business`. |
@@ -69,8 +69,8 @@ status; polling and retry decisions belong to the caller.
 | `--device` | Optional `serp` device (`desktop` or `mobile`). |
 | `--os` | Optional `serp` operating system filter. |
 | `--max-poison-retries` | Bounded SearchGuard poison and `suspect_decoy` re-pulls for `serp` within cumulative `--max-cost-usd`; default 2. |
-| `--no-resolve-poisoned` | Do not send `resolve_poisoned_results` on `serp` (default on since 0.1.12; it costs one extra SERP page per task). Env opt-out: `LEGENDS_DATAFORSEO_RESOLVE_POISONED=0`. |
-| `--decoy-traffic-check` | Score `serp` top-10 sites against cached Labs bulk traffic (paid when not cached) as decoy filler evidence. |
+| `--no-resolve-poisoned` | UNPROTECTED. Send `resolve_poisoned_results: false` on `serp`. Refused unless `LEGENDS_DFS_ALLOW_POISONED=1`; results are stamped `integrity: unprotected`, `verified: false`. Resolve is mandatory since 0.1.12 (one extra SERP page per task). |
+| `--allow-unverified` | Print an unverified `serp` result instead of failing. By default an unverified SERP exits 2 with `UnverifiedSerpError` and the stamped response; use only to inspect it. |
 | `--labs-fallback` | Optional DataForSEO Labs competitor cross-verification for `serp` within cumulative `--max-cost-usd`. |
 | `--item-limit` | Maximum Lab items for `competitors` (default 20), `ranked-keywords` (default 100), and `relevant-pages` (default 100). |
 | `--output` | Save full JSON to a new file reserved before HTTP; print a summary. |

@@ -216,6 +216,7 @@ def test_serp_auto_retries_poisoned_response_and_drops_coordinate(monkeypatch):
         max_poison_retries=2,
         labs_fallback=True,
         verify_no_swap=False,
+        allow_unverified=True,
         credentials=AUTH,
         confirm=True,
         estimated_cost_usd=0.02,
@@ -230,6 +231,7 @@ def test_serp_auto_retries_poisoned_response_and_drops_coordinate(monkeypatch):
     assert res_obj["items"][0]["domain"] == "www.gattilaw.com"
     assert res_obj["items"][0]["resolved_domain"] == "gattilaw.com"
     assert res_obj["serp_integrity"]["status"] == "clean"
+    assert res_obj["serp_integrity"]["verified"] is False  # no from_web, verification disabled
     assert res_obj["serp_integrity"]["retry_attempts"] == 1
     assert res_obj["serp_integrity"]["attempt_task_ids"] == ["task-poisoned-1", "task-clean-2"]
     assert res_obj["labs_competitors"] == [{"domain": "gattilaw.com", "avg_position": 1.0}]
@@ -309,6 +311,7 @@ def test_serp_enforces_cumulative_max_cost_across_retries_and_labs_fallback(monk
         return io.BytesIO(json.dumps(poisoned_envelope).encode("utf-8"))
 
     monkeypatch.setattr(client, "_open", fake_open)
+    monkeypatch.setenv("LEGENDS_DFS_ALLOW_POISONED", "1")
     capped_res = serp(
         "personal injury lawyer",
         location_coordinate="45.5152,-122.6784,12z",

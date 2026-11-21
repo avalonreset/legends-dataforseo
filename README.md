@@ -31,7 +31,7 @@ Install with `cto-legends install legends-dataforseo`, then follow the module re
 
 | Workflow | Included interface | What you get |
 | --- | --- | --- |
-| SERP research | `serp()` / `legends-dataforseo serp` | Google organic results with automatic `/goto` domain unmasking, `serp_integrity` checks, and optional Labs fallback |
+| SERP research | `serp()` / `legends-dataforseo serp` | Google organic results with mandatory decoy defense (`resolve_poisoned_results`, fail closed: unverified SERPs raise `UnverifiedSerpError`), automatic `/goto` domain unmasking, `serp_integrity.verified`, and optional Labs fallback |
 | Local ranking scans | `maps()` and queue `api_request()` calls | Maps live results, standard task submission, and saved-task retrieval |
 | Business profiles | `business()` / `legends-dataforseo business` | Google Business Profile (`my_business_info`) live lookup and standard queue tasks by `cid`, `place_id`, or keyword |
 | Keyword research | `demand()` / `legends-dataforseo demand` | DataForSEO Labs keyword overview for a keyword list |
@@ -77,7 +77,8 @@ legends-dataforseo serp "technical SEO" --location-code 2840
   "preview": true,
   "path": "/serp/google/organic/live/advanced",
   "method": "POST",
-  "body": [{"language_code": "en", "keyword": "technical SEO", "depth": 10, "location_code": 2840}],
+  "body": [{"language_code": "en", "keyword": "technical SEO", "depth": 10, "location_code": 2840,
+            "resolve_poisoned_results": true}],
   "estimated_cost_usd": null,
   "max_cost_usd": null
 }
