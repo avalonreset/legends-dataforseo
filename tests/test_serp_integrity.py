@@ -231,7 +231,9 @@ def test_serp_auto_retries_poisoned_response_and_drops_coordinate(monkeypatch):
     assert res_obj["items"][0]["domain"] == "www.gattilaw.com"
     assert res_obj["items"][0]["resolved_domain"] == "gattilaw.com"
     assert res_obj["serp_integrity"]["status"] == "clean"
-    assert res_obj["serp_integrity"]["verified"] is False  # no from_web, verification disabled
+    # resolve sent, clean, no decoy signal, verify_no_swap off: single-pull basis
+    assert res_obj["serp_integrity"]["verified"] is True
+    assert res_obj["serp_integrity"]["verified_basis"] == "provider_clean_no_decoy_signals"
     assert res_obj["serp_integrity"]["retry_attempts"] == 1
     assert res_obj["serp_integrity"]["attempt_task_ids"] == ["task-poisoned-1", "task-clean-2"]
     assert res_obj["labs_competitors"] == [{"domain": "gattilaw.com", "avg_position": 1.0}]

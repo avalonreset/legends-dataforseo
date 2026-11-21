@@ -14,7 +14,8 @@ serp(keyword, *, location_code=2840, location_name=None,
      location_coordinate=None, language_code="en", depth=10,
      device=None, os=None, max_poison_retries=2, labs_fallback=False,
      resolve_poisoned_results=None, incumbent_sites=None,
-     verify_no_swap=True, allow_unverified=False, **request_options) -> dict
+     verify_no_swap=False, allow_unverified=False, resolve_goto_urls=None,
+     **request_options) -> dict
 demand(keywords, *, location_code=2840, language_code="en",
        **request_options) -> dict
 competitors(keywords, *, location_code=2840, language_code="en", limit=20,
@@ -114,7 +115,8 @@ incumbent_sites=None, thresholds=None)`,
 verification=None, unprotected=False)`, `stamp_envelope_verified(envelope, *,
 verification=None, resolve_sent=None)`, `resolve_poisoned_default()`,
 `allow_poisoned()`, `ALLOW_POISONED_ENV`, `SERP_TIMEOUT_S`,
-`UnverifiedSerpError`, and `site_traffic(sites, *, location_code=2840,
+`UnverifiedSerpError`, `WEBSITE_NAME_PLATFORMS`, `website_name_target(website_name)`,
+and `site_traffic(sites, *, location_code=2840,
 language_code="en", max_age_days=30, **request_options)` (paid Labs bulk
 traffic estimation, cached locally; informational, not a decoy signal).
 
@@ -125,12 +127,17 @@ results that are not what a person sees. The 2026-11-20 bench (40 keywords)
 found the default pull was a decoy on 35/40 and `resolve_poisoned_results` cut
 that to 3/40, so the defense is mandatory and the library fails closed.
 
-**Resolve is mandatory.** Every Google organic task (`live/advanced`,
-`live/regular`, `live/html`, `task_post`) carries
+**Resolve is mandatory.** Every Google organic request (`live/advanced`,
+`live/regular`, `live/html`, standard-queue `task_post`) carries
 `resolve_poisoned_results: true`. `serp()` always sends it. Raw `api_request`
 injects it when absent (and raises its estimate by one page per injected task)
 and raises `RouteError` for an explicit non-true value or for `udm=14` /
-`udm=web` tasks, which DataForSEO cannot combine with resolve. The only escape
+`udm=web` tasks, which DataForSEO cannot combine with resolve. Organic result
+envelopes (`live/*` and standard-queue `task_get/{advanced,regular,html}/{id}`)
+are normalized and stamped; a `task_get` reads protection from the task data
+echo. `resolve_goto_urls` is never injected by `api_request` (it adds redirect
+unwrap latency); `serp(resolve_goto_urls=None)` sends it for `depth <= 10` and
+omits it for deeper rank tracking, and `True` / `False` force it. The only escape
 hatch is `LEGENDS_DFS_ALLOW_POISONED=1` (`ALLOW_POISONED_ENV`, checked by
 `allow_poisoned()`, exact value `1`), plus an explicit
 `resolve_poisoned_results=False`; the env alone never turns resolve off. Such
@@ -162,13 +169,25 @@ never count as clean evidence. `decoy.provider_resolve` is `resolved`,
 
 Google now wraps most organic URLs in `google.com/goto` with `domain:
 google.com` and no `timestamp`. Site keys therefore come from
-`organic_item_site_key(item)`: resolved domain, then breadcrumb host, then a
-`website_name` slug, and never `google.com`.
+`organic_item_site_key(item)`: resolved domain, then breadcrumb host, then the
+closed `WEBSITE_NAME_PLATFORMS` allowlist (reddit, youtube, facebook,
+instagram, x, twitter, linkedin, tiktok, yelp, nextdoor, quora, pinterest,
+tripadvisor, medium), then a `website_name` slug key, and never `google.com`.
+`extract_breadcrumb_target` and `normalize_organic_item` never turn engagement
+breadcrumb text (`30+ comments · 2 years ago`) into `breadcrumb_path_hint`.
+When the breadcrumb has no host, an allowlisted `website_name` such as
+`Reddit · r/Phoenixville` sets `resolved_domain = "reddit.com"`,
+`breadcrumb_path_hint = "r/Phoenixville"` and `resolution_basis =
+"website_name"`; a platform domain without a hint is enriched from the
+`website_name` qualifier. Business names are never slug-guessed into domains.
 
 **Pipeline in `serp()`.** Resolve pull, then the detector. A `suspect_decoy`
 SERP is re-pulled with resolve within `max_poison_retries` and the cumulative
-`max_cost_usd`. A clean result with zero swaps gets one verification pull
-(`verify_no_swap=True`, default, one more resolve-priced page, cap-checked): a
+`max_cost_usd`. A clean result with zero swaps gets one verification pull only
+when `verify_no_swap=True` (off by default since it doubles cost on clean
+SERPs; one more resolve-priced page, cap-checked, and a cap too small for it
+records `verification = {"status": "failed", "reason":
+"max_cost_usd_insufficient_for_second_pull"}` and fails closed): a
 swap on that pull is adopted (`resolved_on_verify`), agreement above
 `pull_overlap_max` is `stable`, disagreement is `unstable` and fires
 `pull_instability`. A SERP still suspect at the end gets
@@ -180,15 +199,19 @@ per-process lock per normalized keyword so same-keyword calls run one at a time.
 
 **Verified stamp.** `stamp_verified(integrity, *, verification=None,
 unprotected=False)` sets `serp_integrity.verified`, `integrity`
-(`protected`/`unprotected`), `verified_basis` (`provider_resolved`,
-`stable_verification_pull` or None), `signals_used` and `unverified_reasons`
-(and `unverified = true` when not verified). `verified` is true only when the
-task was protected, the block is `clean`, no decoy signal fired, and the block
-was either provider-resolved (`from_web` swaps) or confirmed by a `stable`
-verification pull. `stamp_envelope_verified(envelope, *, verification=None,
+(`protected`/`unprotected`), `verified_basis`, `signals_used` and
+`unverified_reasons` (and `unverified = true` when not verified). It rejects
+when the task was unprotected, the block is not `clean`, any decoy signal
+fired, or a verification pull disagreed (`unstable`, `verify_pull_suspect`) or
+failed (`failed`, `verify_failed`). Otherwise `verified_basis` is
+`provider_from_web` (resolve swapped results in, `from_web > 0`),
+`double_pull_stable` (zero swaps confirmed by a `stable` verification pull) or
+`provider_clean_no_decoy_signals` (zero swaps, `resolve_poisoned_results`
+confirmed sent, no second pull requested, no decoy signal and no canary hit;
+this is the default single-pull `serp()`, raw live pulls and standard-queue
+`task_get`). `stamp_envelope_verified(envelope, *, verification=None,
 resolve_sent=None)` stamps every organic block of an envelope; raw
-`api_request` uses it with `verification = not_run`, so only provider-resolved
-raw blocks verify.
+`api_request` uses it with `verification = not_run`.
 
 **Fail closed.** When the final SERP is not verified, `serp()` raises
 `UnverifiedSerpError` (an `ApiError` with the stamped envelope on `.response`

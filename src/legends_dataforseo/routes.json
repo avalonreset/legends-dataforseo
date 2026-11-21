@@ -9,6 +9,8 @@
       "method": "GET",
       "path": "/appendix/user_data",
       "family": "appendix",
+      "section": "appendix",
+      "mode": "free",
       "charged": false,
       "summary": "Account information; response may contain private data",
       "estimate": null
@@ -20,6 +22,8 @@
       "method": "GET",
       "path": "/appendix/status",
       "family": "appendix",
+      "section": "appendix",
+      "mode": "free",
       "charged": false,
       "summary": "No-charge DataForSEO API service status",
       "estimate": null
@@ -31,6 +35,8 @@
       "method": "GET",
       "path": "/serp/endpoints",
       "family": "appendix",
+      "section": "serp",
+      "mode": "free",
       "charged": false,
       "summary": "No-charge current SERP endpoint inventory",
       "estimate": null
@@ -44,6 +50,8 @@
       "method": "GET",
       "path": "/serp/google/locations",
       "family": "serp-locations",
+      "section": "serp",
+      "mode": "free",
       "charged": false,
       "summary": "No-charge Google SERP location directory",
       "estimate": null
@@ -57,6 +65,8 @@
       "method": "POST",
       "path": "/serp/google/organic/live/advanced",
       "family": "serp-google",
+      "section": "serp",
+      "mode": "live",
       "charged": true,
       "summary": "Google organic live advanced",
       "estimate": {
@@ -73,6 +83,8 @@
       "method": "POST",
       "path": "/serp/google/organic/live/advanced",
       "family": "serp-google",
+      "section": "serp",
+      "mode": "live",
       "charged": true,
       "summary": "Google SERP envelope containing People Also Ask items when available",
       "estimate": {
@@ -91,6 +103,8 @@
       "method": "POST",
       "path": "/serp/google/maps/live/advanced",
       "family": "serp-maps",
+      "section": "serp",
+      "mode": "live",
       "charged": true,
       "summary": "Google Maps live advanced",
       "estimate": {
@@ -109,6 +123,8 @@
       "method": "POST",
       "path": "/serp/bing/organic/live/advanced",
       "family": "serp-bing",
+      "section": "serp",
+      "mode": "live",
       "charged": true,
       "summary": "Bing organic live advanced",
       "estimate": {
@@ -125,6 +141,8 @@
       "method": "POST",
       "path": "/serp/youtube/organic/live/advanced",
       "family": "youtube",
+      "section": "serp",
+      "mode": "live",
       "charged": true,
       "summary": "YouTube organic live advanced",
       "estimate": {
@@ -143,6 +161,8 @@
       "method": "POST",
       "path": "/keywords_data/google_ads/search_volume/live",
       "family": "ads-volume",
+      "section": "keywords_data",
+      "mode": "live",
       "charged": true,
       "summary": "Google Ads search volume for up to 1000 keywords",
       "estimate": {
@@ -161,6 +181,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/keyword_overview/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "Keyword demand overview: volume, CPC, competition, intent and monthly history",
       "estimate": {
@@ -177,6 +199,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/keyword_ideas/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "Keyword ideas",
       "estimate": {
@@ -193,6 +217,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/related_keywords/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "Related keywords",
       "estimate": {
@@ -209,6 +235,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/search_intent/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "Search intent classification",
       "estimate": {
@@ -225,6 +253,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/bulk_keyword_difficulty/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "Bulk keyword difficulty",
       "estimate": {
@@ -243,6 +273,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/serp_competitors/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "SERP competitors across a keyword list",
       "estimate": {
@@ -261,6 +293,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/ranked_keywords/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "Ranked keywords and inner ranking URLs for a target domain",
       "estimate": {
@@ -279,6 +313,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/relevant_pages/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "Top ranking pages and organic traffic metrics for a target domain",
       "estimate": {
@@ -297,6 +333,8 @@
       "method": "POST",
       "path": "/dataforseo_labs/google/bulk_traffic_estimation/live",
       "family": "labs",
+      "section": "labs",
+      "mode": "live",
       "charged": true,
       "summary": "Estimated organic traffic for up to 1000 target domains (decoy filler-site signal)",
       "estimate": {
@@ -313,6 +351,8 @@
       "method": "POST",
       "path": "/keywords_data/google_trends/explore/live",
       "family": "trends",
+      "section": "keywords_data",
+      "mode": "live",
       "charged": true,
       "summary": "Google Trends graph for up to five keywords",
       "estimate": {
@@ -332,6 +372,8 @@
       "method": "POST",
       "path": "/business_data/google/my_business_info/live",
       "family": "business-info",
+      "section": "business_data",
+      "mode": "live",
       "charged": true,
       "summary": "Google Business Profile information",
       "estimate": {
@@ -350,6 +392,8 @@
       "method": "POST",
       "path": "/business_data/google/my_business_info/task_post",
       "family": "business-info",
+      "section": "business_data",
+      "mode": "standard_queue",
       "charged": true,
       "summary": "Queue Google Business Profile info collection; returns task id",
       "estimate": {
@@ -368,6 +412,8 @@
       "method": "GET",
       "path": "/business_data/google/my_business_info/task_get/{id}",
       "family": "business-info",
+      "section": "business_data",
+      "mode": "free",
       "charged": false,
       "summary": "Collect a completed Google Business Profile task by id",
       "estimate": null
@@ -381,6 +427,8 @@
       "method": "POST",
       "path": "/business_data/google/reviews/task_post",
       "family": "reviews",
+      "section": "business_data",
+      "mode": "standard_queue",
       "charged": true,
       "summary": "Queue Google reviews collection; returns task id",
       "estimate": {
@@ -397,6 +445,8 @@
       "method": "GET",
       "path": "/business_data/google/reviews/task_get/{id}",
       "family": "reviews",
+      "section": "business_data",
+      "mode": "free",
       "charged": false,
       "summary": "Collect a completed Google reviews task by id",
       "estimate": null
@@ -408,6 +458,8 @@
       "method": "POST",
       "path": "/backlinks/summary/live",
       "family": "backlinks-summary",
+      "section": "backlinks",
+      "mode": "live",
       "charged": true,
       "summary": "Backlinks summary only",
       "estimate": null
@@ -419,6 +471,8 @@
       "method": "POST",
       "path": "/on_page/instant_pages",
       "family": "onpage-instant",
+      "section": "on_page",
+      "mode": "live",
       "charged": true,
       "summary": "On-page instant without JavaScript or resource loading",
       "estimate": {
@@ -435,6 +489,8 @@
       "method": "POST",
       "path": "/ai_optimization/llm_mentions/search/live",
       "family": "llm-mentions",
+      "section": "ai_optimization",
+      "mode": "live",
       "charged": true,
       "summary": "LLM mentions search; explicit confirmation required",
       "estimate": {
@@ -451,6 +507,8 @@
       "method": "POST",
       "path": "/serp/google/maps/task_post",
       "family": "serp-maps",
+      "section": "serp",
+      "mode": "standard_queue",
       "charged": true,
       "summary": "Queue Google Maps tasks; normal priority by default",
       "estimate": null
@@ -462,9 +520,420 @@
       "method": "GET",
       "path": "/serp/google/maps/task_get/advanced/{id}",
       "family": "serp-maps",
+      "section": "serp",
+      "mode": "free",
       "charged": false,
       "summary": "Retrieve Maps task status and results by id",
       "estimate": null
+    },
+    {
+      "name": "serp-task-post",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/serp/google/organic/task_post",
+      "family": "serp-google",
+      "section": "serp",
+      "mode": "standard_queue",
+      "charged": true,
+      "summary": "Google organic standard queue task_post (resolve_poisoned_results enforced by client).",
+      "estimate": {
+        "base_usd": 0.0012,
+        "depth_unit": 10,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "serp-task-get",
+      "aliases": [],
+      "kind": "api",
+      "method": "GET",
+      "path": "/serp/google/organic/task_get/advanced/{id}",
+      "family": "serp-google",
+      "section": "serp",
+      "mode": "free",
+      "charged": false,
+      "summary": "Fetch completed Google organic standard queue task (stamped with serp_integrity).",
+      "estimate": null
+    },
+    {
+      "name": "local-finder",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/serp/google/local_finder/live/advanced",
+      "family": "serp-local-finder",
+      "section": "serp",
+      "mode": "live",
+      "charged": true,
+      "summary": "Google Local Finder (expanded Maps pack) live advanced results.",
+      "estimate": {
+        "base_usd": 0.002,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "ai-mode",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/serp/google/ai_mode/live/advanced",
+      "family": "serp-ai-mode",
+      "section": "serp",
+      "mode": "live",
+      "charged": true,
+      "summary": "Google AI Mode SERP live advanced results.",
+      "estimate": {
+        "base_usd": 0.004,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "serp-ai-summary",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/serp/ai_summary",
+      "family": "serp-ai-summary",
+      "section": "serp",
+      "mode": "live",
+      "charged": true,
+      "summary": "DataForSEO LLM summary of a completed SERP task.",
+      "estimate": {
+        "base_usd": 0.003,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "serp-screenshot",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/serp/screenshot",
+      "family": "serp-screenshot",
+      "section": "serp",
+      "mode": "live",
+      "charged": true,
+      "summary": "Full-page rendered screenshot of a completed SERP task.",
+      "estimate": {
+        "base_usd": 0.002,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "keywords-for-site",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/dataforseo_labs/google/keywords_for_site/live",
+      "family": "labs",
+      "section": "labs",
+      "mode": "live",
+      "charged": true,
+      "summary": "Keywords relevant to a target domain from DataForSEO Labs.",
+      "estimate": {
+        "base_usd": 0.012,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "historical-serp",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/dataforseo_labs/google/historical_serps/live",
+      "family": "labs",
+      "section": "labs",
+      "mode": "live",
+      "charged": true,
+      "summary": "Historical Google SERP snapshots for a keyword.",
+      "estimate": {
+        "base_usd": 0.012,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "domain-intersection",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/dataforseo_labs/google/domain_intersection/live",
+      "family": "labs",
+      "section": "labs",
+      "mode": "live",
+      "charged": true,
+      "summary": "Keywords for which multiple target domains rank in common.",
+      "estimate": {
+        "base_usd": 0.012,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "subdomains",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/dataforseo_labs/google/subdomains/live",
+      "family": "labs",
+      "section": "labs",
+      "mode": "live",
+      "charged": true,
+      "summary": "Subdomains and visibility metrics for a target root domain.",
+      "estimate": {
+        "base_usd": 0.012,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "ai-keyword-volume",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/ai_optimization/ai_keyword_data/keywords_search_volume/live",
+      "family": "ai-keyword-data",
+      "section": "ai_optimization",
+      "mode": "live",
+      "charged": true,
+      "summary": "AI search volume and trend metrics for keywords across LLM search engines.",
+      "estimate": {
+        "base_usd": 0.015,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "llm-mentions-top-domains",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/ai_optimization/llm_mentions/top_domains/live",
+      "family": "llm-mentions",
+      "section": "ai_optimization",
+      "mode": "live",
+      "charged": true,
+      "summary": "Top domains cited across LLM mention responses for a query or topic.",
+      "estimate": {
+        "base_usd": 0.02,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "llm-mentions-top-pages",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/ai_optimization/llm_mentions/top_pages/live",
+      "family": "llm-mentions",
+      "section": "ai_optimization",
+      "mode": "live",
+      "charged": true,
+      "summary": "Top URLs cited across LLM mention responses for a query or topic.",
+      "estimate": {
+        "base_usd": 0.02,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "llm-mentions-aggregated",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/ai_optimization/llm_mentions/aggregated_metrics/live",
+      "family": "llm-mentions",
+      "section": "ai_optimization",
+      "mode": "live",
+      "charged": true,
+      "summary": "Aggregated citation and brand mention metrics across LLM platforms.",
+      "estimate": {
+        "base_usd": 0.02,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "llm-responses-chatgpt",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/ai_optimization/chat_gpt/llm_responses/live",
+      "family": "llm-responses",
+      "section": "ai_optimization",
+      "mode": "live",
+      "charged": true,
+      "summary": "Live ChatGPT response and source citations via AI Optimization API.",
+      "estimate": {
+        "base_usd": 0.03,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "llm-responses-claude",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/ai_optimization/claude/llm_responses/live",
+      "family": "llm-responses",
+      "section": "ai_optimization",
+      "mode": "live",
+      "charged": true,
+      "summary": "Live Claude response and source citations via AI Optimization API.",
+      "estimate": {
+        "base_usd": 0.03,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "llm-responses-gemini",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/ai_optimization/gemini/llm_responses/live",
+      "family": "llm-responses",
+      "section": "ai_optimization",
+      "mode": "live",
+      "charged": true,
+      "summary": "Live Gemini response and source citations via AI Optimization API.",
+      "estimate": {
+        "base_usd": 0.03,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "llm-responses-perplexity",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/ai_optimization/perplexity/llm_responses/live",
+      "family": "llm-responses",
+      "section": "ai_optimization",
+      "mode": "live",
+      "charged": true,
+      "summary": "Live Perplexity response and source citations via AI Optimization API.",
+      "estimate": {
+        "base_usd": 0.03,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "referring-domains",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/backlinks/referring_domains/live",
+      "family": "backlinks",
+      "section": "backlinks",
+      "mode": "live",
+      "charged": true,
+      "summary": "Referring domains pointing to a target domain or URL.",
+      "estimate": {
+        "base_usd": 0.02,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "anchors",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/backlinks/anchors/live",
+      "family": "backlinks",
+      "section": "backlinks",
+      "mode": "live",
+      "charged": true,
+      "summary": "Anchor text breakdown for backlinks to a target.",
+      "estimate": {
+        "base_usd": 0.02,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "backlinks-list",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/backlinks/backlinks/live",
+      "family": "backlinks",
+      "section": "backlinks",
+      "mode": "live",
+      "charged": true,
+      "summary": "Individual backlinks pointing to a target domain or URL.",
+      "estimate": {
+        "base_usd": 0.02,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "content-parsing",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/on_page/content_parsing/live",
+      "family": "onpage-content-parsing",
+      "section": "on_page",
+      "mode": "live",
+      "charged": true,
+      "summary": "Live structured content extraction and markdown parsing for a page.",
+      "estimate": {
+        "base_usd": 0.005,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
+    },
+    {
+      "name": "lighthouse",
+      "aliases": [],
+      "kind": "api",
+      "method": "POST",
+      "path": "/on_page/lighthouse/live/json",
+      "family": "onpage-lighthouse",
+      "section": "on_page",
+      "mode": "live",
+      "charged": true,
+      "summary": "Live Google Lighthouse performance, accessibility, and SEO audit JSON.",
+      "estimate": {
+        "base_usd": 0.005,
+        "depth_unit": null,
+        "item_usd": 0,
+        "note": "Baseline estimate only; verify current pricing and request options."
+      }
     }
   ]
 }

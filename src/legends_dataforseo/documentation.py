@@ -16,9 +16,9 @@ import tempfile
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Request, build_opener
 
-from .client import _safe_local_path
+from .client import _safe_local_path, _ssl_context
 
 DOCS_ROOT = "https://docs.dataforseo.com/v3"
 INDEX_URL = DOCS_ROOT + "/llms.txt/"
@@ -35,7 +35,12 @@ class _NoRedirect(HTTPRedirectHandler):
 
 
 def _open(request, timeout):
-    return build_opener(ProxyHandler({}), _NoRedirect()).open(request, timeout=timeout)
+    # certifi-backed context: Windows Python 3.12 otherwise fails CERTIFICATE_VERIFY_FAILED.
+    handlers = [ProxyHandler({}), _NoRedirect()]
+    ctx = _ssl_context()
+    if ctx is not None:
+        handlers.insert(1, HTTPSHandler(context=ctx))
+    return build_opener(*handlers).open(request, timeout=timeout)
 
 
 def _url(path):

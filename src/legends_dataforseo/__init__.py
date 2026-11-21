@@ -27,6 +27,8 @@ from .serp_integrity import (
     site_key,
     stamp_envelope_verified,
     stamp_verified,
+    WEBSITE_NAME_PLATFORMS,
+    website_name_target,
 )
 from .tasks import wait_task
 
@@ -43,5 +45,5 @@ __all__ = [
     "DECOY_THRESHOLDS", "apply_decoy_assessment", "assess_decoy_signals", "organic_item_site_key", "organic_site_keys",
     "overlap_ratio", "site_key", "resolve_poisoned_default", "site_traffic",
     "ALLOW_POISONED_ENV", "SERP_TIMEOUT_S", "UnverifiedSerpError", "allow_poisoned",
-    "stamp_envelope_verified", "stamp_verified",
+    "stamp_envelope_verified", "stamp_verified", "WEBSITE_NAME_PLATFORMS", "website_name_target",
 ]

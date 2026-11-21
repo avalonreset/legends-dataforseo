@@ -97,6 +97,12 @@ def main(argv=None) -> int:
                                       "LEGENDS_DFS_ALLOW_POISONED=1, results stamped unprotected")
             command.add_argument("--allow-unverified", action="store_true",
                                  help="Return an unverified SERP (verified=false) instead of failing closed")
+            command.add_argument("--resolve-goto-urls", dest="resolve_goto_urls", action="store_true", default=None,
+                                 help="Send resolve_goto_urls=true (default only when --depth <= 10)")
+            command.add_argument("--no-resolve-goto-urls", dest="resolve_goto_urls", action="store_false",
+                                 help="Omit resolve_goto_urls (domains still come from breadcrumb/website_name)")
+            command.add_argument("--verify-no-swap", action="store_true", default=False,
+                                 help="Add one verification pull when resolve swapped nothing (doubles cost)")
         if name in ("competitors", "ranked-keywords", "relevant-pages"):
             command.add_argument("--item-limit", type=int, default=20 if name == "competitors" else 100,
                                  help="Maximum Lab items to request in task payload")
@@ -254,6 +260,10 @@ def _run(args):
                         task["resolve_poisoned_results"] = False
                     else:
                         task["resolve_poisoned_results"] = resolve_poisoned_default()
+                    goto = getattr(args, "resolve_goto_urls", None)
+                    if goto is None:
+                        goto = args.depth <= 10
+                    if goto:
                         task["resolve_goto_urls"] = True
             payload, method = [task], "POST"
         if not args.execute:
@@ -275,6 +285,8 @@ def _run(args):
                     labs_fallback=getattr(args, "labs_fallback", False),
                     resolve_poisoned_results=False if getattr(args, "no_resolve_poisoned", False) else None,
                     allow_unverified=getattr(args, "allow_unverified", False),
+                    resolve_goto_urls=getattr(args, "resolve_goto_urls", None),
+                    verify_no_swap=getattr(args, "verify_no_swap", False),
                     confirm=True,
                     timeout=args.timeout,
                     consumer="cli",

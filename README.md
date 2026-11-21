@@ -31,13 +31,13 @@ Install with `cto-legends install legends-dataforseo`, then follow the module re
 
 | Workflow | Included interface | What you get |
 | --- | --- | --- |
-| SERP research | `serp()` / `legends-dataforseo serp` | Google organic results with mandatory decoy defense (`resolve_poisoned_results`, fail closed: unverified SERPs raise `UnverifiedSerpError`), automatic `/goto` domain unmasking, `serp_integrity.verified`, and optional Labs fallback |
+| SERP research | `serp()` / `legends-dataforseo serp` | Google organic results with mandatory decoy defense (`resolve_poisoned_results`, fail closed: unverified SERPs raise `UnverifiedSerpError`), automatic `/goto` domain unmasking (breadcrumb host, then a closed `website_name` platform allowlist such as `Reddit · r/philadelphia` to `reddit.com`), `serp_integrity.verified` with a `verified_basis`, `resolve_goto_urls` by depth, opt-in `--verify-no-swap` double pull, and optional Labs fallback |
 | Local ranking scans | `maps()` and queue `api_request()` calls | Maps live results, standard task submission, and saved-task retrieval |
 | Business profiles | `business()` / `legends-dataforseo business` | Google Business Profile (`my_business_info`) live lookup and standard queue tasks by `cid`, `place_id`, or keyword |
 | Keyword research | `demand()` / `legends-dataforseo demand` | DataForSEO Labs keyword overview for a keyword list |
 | SERP & domain Labs | `competitors()`, `ranked_keywords()`, `relevant_pages()` | DataForSEO Labs SERP competitors, domain ranked keywords, and top ranking pages |
 | Custom integrations | `api_request()` / `legends-dataforseo call` | GET/POST access to documented v3 endpoints |
-| Request planning | `routes`, `route`, `estimate`, command previews | Local discovery and baseline estimates without credentials |
+| Request planning | `routes`, `route`, `estimate`, command previews | Local discovery and baseline estimates without credentials across 53 registered v3 routes (SERP queue, Local Finder, AI Mode, Labs, AI Optimization LLM responses and mentions, Backlinks, On-Page) |
 | Endpoint discovery | `docs search`, `docs read` | Official documentation with a local offline cache |
 | Focused results | `--output`, `view`, `--select`, `--limit` | Complete saved JSON with concise, labelled display views |
 | Research memory | `legends-dataforseo evidence` | Offline export, inventory, search, verified views, compatible reuse and optional vault intake |
@@ -78,7 +78,7 @@ legends-dataforseo serp "technical SEO" --location-code 2840
   "path": "/serp/google/organic/live/advanced",
   "method": "POST",
   "body": [{"language_code": "en", "keyword": "technical SEO", "depth": 10, "location_code": 2840,
-            "resolve_poisoned_results": true}],
+            "resolve_poisoned_results": true, "resolve_goto_urls": true}],
   "estimated_cost_usd": null,
   "max_cost_usd": null
 }

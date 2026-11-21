@@ -268,7 +268,7 @@ def api_request(
     if (verb == "POST" or not _known_free_get(normalized)) and not confirm:
         raise CostLimitError("Paid or unclassified requests require confirm=True before HTTP.")
     resolve_sent: bool | None = None
-    if verb == "POST" and _is_organic_task_path(standard_path):
+    if verb == "POST" and _is_organic_serp_request_path(standard_path):
         payload, injected = _enforce_resolve(payload)
         resolve_sent = all(task.get("resolve_poisoned_results") is True for task in payload)
         if injected and estimated_cost_usd is not None:
@@ -332,21 +332,34 @@ def api_request(
                 pass
     if result.get("status_code") != 20000:
         raise ApiError("DataForSEO rejected the response envelope; inspect ApiError.response.", response=result)
-    if standard_path.startswith("/serp/google/organic/"):
+    if _is_organic_serp_result_path(standard_path):
         from .serp_integrity import normalize_serp_envelope, stamp_envelope_verified
         normalize_serp_envelope(result, endpoint=standard_path)
-        # Raw calls skip serp()'s verification pull, so only provider-resolved blocks verify.
+        # Raw calls (live pulls and queued task_get) skip serp()'s optional verification pull.
+        # task_get has resolve_sent None, so protection is read from the task data echo.
         stamp_envelope_verified(result, verification={"status": "not_run"}, resolve_sent=resolve_sent)
     return result
 
 
 # Resolved pulls can take 66 s+; never let a timeout turn protection into a transport error.
 SERP_TIMEOUT_S = 300.0
-_ORGANIC_TASK_RE = re.compile(r"^/serp/google/organic/(?:live/(?:advanced|regular|html)|task_post)$")
+# Requests that must carry resolve_poisoned_results (live pulls and standard-queue task_post).
+_ORGANIC_REQUEST_RE = re.compile(r"^/serp/google/organic/(?:live/(?:advanced|regular|html)|task_post)$")
+# Responses that carry organic items to normalize and stamp (live pulls and standard-queue task_get).
+_ORGANIC_RESULT_RE = re.compile(
+    r"^/serp/google/organic/(?:live/(?:advanced|regular|html)|task_get/(?:advanced|regular|html)/[A-Za-z0-9_-]+)$")
 
 
-def _is_organic_task_path(standard_path: str) -> bool:
-    return bool(_ORGANIC_TASK_RE.match(standard_path))
+def _is_organic_serp_request_path(standard_path: str) -> bool:
+    return bool(_ORGANIC_REQUEST_RE.match(standard_path))
+
+
+def _is_organic_serp_result_path(standard_path: str) -> bool:
+    return bool(_ORGANIC_RESULT_RE.match(standard_path))
+
+
+# Backward-compatible alias (0.1.12 drafts).
+_is_organic_task_path = _is_organic_serp_request_path
 
 
 def _web_mode(task: dict[str, Any]) -> bool:
@@ -372,8 +385,8 @@ def _enforce_resolve(payload: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
         elif value is not True and not escape:
             raise RouteError("Google organic SERP tasks must send resolve_poisoned_results=true (decoy defense). "
                              f"Set {ALLOW_POISONED_ENV}=1 to send unprotected tasks; results are stamped unprotected.")
-        if body.get("resolve_poisoned_results") is True and body.get("resolve_goto_urls") is None:
-            body["resolve_goto_urls"] = True
+        # resolve_goto_urls is NOT forced here: it adds redirect-unwrap latency (up to ~40 s on deep
+        # pulls). serp() opts in for depth <= 10; raw callers pass it explicitly when they want it.
         out.append(body)
     return out, injected
 
@@ -557,20 +570,25 @@ def _serp_impl(
     labs_fallback: bool = False,
     resolve_poisoned_results: bool | None = None,
     incumbent_sites: list[str] | None = None,
-    verify_no_swap: bool = True,
+    verify_no_swap: bool = False,
     allow_unverified: bool = False,
+    resolve_goto_urls: bool | None = None,
     **request_options: Any,
 ) -> dict[str, Any]:
-    """One fail-closed Google organic live task (resolve mandatory, decoy re-pull, verification pull).
+    """One fail-closed Google organic live task (resolve mandatory, decoy re-pull, optional verification pull).
 
     resolve_poisoned_results is always sent. resolve_poisoned_results=False is refused unless
     LEGENDS_DFS_ALLOW_POISONED=1, and such results are stamped integrity "unprotected".
+    resolve_goto_urls=None sends resolve_goto_urls=true for depth <= 10 (page-1 pulls that need
+    unwrapped URLs, about 2-3 s extra) and omits it for depth > 10 (deep rank tracking, where
+    breadcrumb / website_name domain extraction is free and redirect unwrapping costs ~40 s).
     Pipeline: resolve pull -> decoy detector -> suspect: re-pull with resolve (max_poison_retries,
-    cumulative max_cost_usd) -> resolve fail-open (no swaps): one verification pull -> stamp
-    serp_integrity.verified. A SERP still suspect ends as status unverified_decoy (decoy flavor)
-    or suspect_poisoned with unresolved=True; it is never relabelled clean.
-    Fail closed: an unverified protected SERP raises UnverifiedSerpError (the stamped envelope is
-    on `.response`) unless allow_unverified=True. 40101 task errors are retried with backoff.
+    cumulative max_cost_usd) -> stamp serp_integrity.verified. verify_no_swap=True adds one
+    verification pull when resolve swapped nothing (doubles cost on clean SERPs); if the cap cannot
+    cover it the verification is "failed" and the SERP fails closed. A SERP still suspect ends as
+    status unverified_decoy (decoy flavor) or suspect_poisoned with unresolved=True; it is never
+    relabelled clean. Fail closed: an unverified protected SERP raises UnverifiedSerpError (the
+    stamped envelope is on `.response`) unless allow_unverified=True. 40101 task errors are retried.
     """
     import time as _time
     from .serp_integrity import (
@@ -587,6 +605,8 @@ def _serp_impl(
         raise ValueError("verify_no_swap must be a boolean")
     if type(allow_unverified) is not bool:
         raise ValueError("allow_unverified must be a boolean")
+    if resolve_goto_urls is not None and type(resolve_goto_urls) is not bool:
+        raise ValueError("resolve_goto_urls must be a boolean or None")
     from .serp_integrity import ALLOW_POISONED_ENV, allow_poisoned, stamp_verified
     if resolve_poisoned_results is None or resolve_poisoned_results is True:
         resolve = True
@@ -610,6 +630,10 @@ def _serp_impl(
         task["device"] = device
     if os is not None:
         task["os"] = os
+    if resolve_goto_urls is None:
+        resolve_goto_urls = not (type(depth) is int and depth > 10)
+    if resolve_goto_urls:
+        task["resolve_goto_urls"] = True
 
     path = route_for("serp")["path"]
     base_step = float(
@@ -729,7 +753,7 @@ def _serp_impl(
     elif _serp_status(result) == "clean" and _provider_resolve(result) != "resolved":
         # Keyed on what we sent, not on DFS echoing resolve_poisoned_results back in task data.
         if not verify_no_swap:
-            verification = {"status": "skipped_disabled"}
+            verification = {"status": "not_run", "reason": "verify_no_swap_disabled"}
         else:
             verify_task = dict(task)
             verify_task["resolve_poisoned_results"] = True
@@ -751,7 +775,7 @@ def _serp_impl(
                     verify_opts["max_cost_usd"] = remaining_max
                     verify_opts["estimated_cost_usd"] = step_est
             if not affordable:
-                verification = {"status": "skipped_budget"}
+                verification = {"status": "failed", "reason": "max_cost_usd_insufficient_for_second_pull"}
             else:
                 first_block = _serp_first_block(result)
                 first_top = organic_site_keys(first_block, limit=10) if first_block else []

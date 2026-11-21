@@ -54,6 +54,71 @@ _BREADCRUMB_SPLIT_RE = re.compile(r"\s*(?:\u203a|\u00bb|\ufffd|>|/)\s*")
 _SCHEME_PREFIX_RE = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
 _HOST_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", re.I)
 
+# Closed allowlist: SERP `website_name` first segment -> registrable domain.
+# Only platforms whose display name maps to exactly one domain belong here.
+# Anything else (a business name) stays unresolved; never slug-guess a domain.
+WEBSITE_NAME_PLATFORMS: dict[str, str] = {
+    "reddit": "reddit.com", "youtube": "youtube.com", "facebook": "facebook.com",
+    "instagram": "instagram.com", "x": "x.com", "twitter": "x.com",
+    "linkedin": "linkedin.com", "tiktok": "tiktok.com", "yelp": "yelp.com",
+    "nextdoor": "nextdoor.com", "quora": "quora.com", "pinterest": "pinterest.com",
+    "tripadvisor": "tripadvisor.com", "medium": "medium.com",
+}
+_PLATFORM_DOMAINS = frozenset(WEBSITE_NAME_PLATFORMS.values()) | {"twitter.com"}
+_WEBSITE_NAME_SPLIT_RE = re.compile(r"\s*[\u00b7\u2022|]\s*")
+_ENGAGEMENT_HINT_RE = re.compile(r"\b(comments?|likes?|views?|followers?|reactions?|ago|subscribers?)\b", re.I)
+_HANDLE_RE = re.compile(r"^@?[A-Za-z0-9._-]{2,40}$")
+_SUBREDDIT_RE = re.compile(r"^r/([A-Za-z0-9_]{2,25})$")
+_HANDLE_PLATFORMS = frozenset({"instagram.com", "tiktok.com", "x.com", "medium.com"})
+
+
+def _clean_path_hint(hint: Any) -> str | None:
+    """Drop empty hints and engagement breadcrumb text ('30+ comments', '2 years ago')."""
+    if not isinstance(hint, str) or not hint.strip() or _ENGAGEMENT_HINT_RE.search(hint):
+        return None
+    return hint.strip()
+
+
+def website_name_target(website_name: Any) -> dict[str, Any] | None:
+    """Resolve a website_name-only SERP item ('Reddit \u00b7 r/Phoenixville') to a platform domain + hint.
+
+    Returns None unless the leading segment is an allowlisted platform (WEBSITE_NAME_PLATFORMS).
+    The qualifier after the separator becomes a path hint for search/scoring; it is never used
+    to construct a final URL (the ranked thread is not the subreddit front page).
+    """
+    if not isinstance(website_name, str) or not website_name.strip():
+        return None
+    flat = website_name.replace("\xa0", " ").strip()
+    parts = [p.strip() for p in _WEBSITE_NAME_SPLIT_RE.split(flat) if p.strip()]
+    if not parts:
+        return None
+    platform, qualifier = parts[0], (" \u00b7 ".join(parts[1:]) or None)
+    domain = WEBSITE_NAME_PLATFORMS.get(platform.casefold())
+    if domain is None:
+        return None
+    path_hint = None
+    if qualifier and not _ENGAGEMENT_HINT_RE.search(qualifier):
+        subreddit = _SUBREDDIT_RE.match(qualifier)
+        if domain == "reddit.com" and subreddit:
+            path_hint = f"r/{subreddit.group(1)}"
+        elif domain in _HANDLE_PLATFORMS and _HANDLE_RE.match(qualifier):
+            path_hint = qualifier.lstrip("@")
+        else:
+            path_hint = qualifier  # page / channel / company name: search term only
+    return {"target": domain, "domain": domain, "path_hint": path_hint, "resolution_basis": "website_name"}
+
+
+def _platform_hint(domain: Any, website_name: Any) -> str | None:
+    """website_name qualifier hint when `domain` is the same allowlisted platform the name maps to."""
+    key = site_key(domain)
+    if key not in _PLATFORM_DOMAINS:
+        return None
+    named = website_name_target(website_name)
+    if not named:
+        return None
+    same = named["domain"] == key or {named["domain"], key} == {"x.com", "twitter.com"}
+    return named["path_hint"] if same else None
+
 
 def is_goto_wrapped_url(url: Any) -> bool:
     """Return True when a URL is an opaque Google redirect wrapper (/goto or /url)."""
@@ -75,36 +140,51 @@ def extract_breadcrumb_target(
     - 'https://warrenallen.com › choosing-personal-injury-atto...'
       -> {'host': 'warrenallen.com', 'domain': 'warrenallen.com',
           'path_hint': 'choosing-personal-injury-atto'}
+    - breadcrumb '30+ comments · 2 years ago', website_name 'Reddit · r/Phoenixville'
+      -> {'host': None, 'domain': 'reddit.com', 'resolved_domain': 'reddit.com',
+          'path_hint': 'r/Phoenixville', 'resolution_basis': 'website_name'}
+
+    Engagement text ('30+ comments', '2 years ago') never becomes a path hint. A breadcrumb
+    without a host falls back to the closed WEBSITE_NAME_PLATFORMS allowlist only; business
+    names are never slug-guessed into domains.
     """
     result: dict[str, str | None] = {
         "host": None,
         "domain": None,
+        "resolved_domain": None,
         "path_hint": None,
+        "resolution_basis": None,
         "website_name": website_name.strip() if isinstance(website_name, str) and website_name.strip() else None,
     }
-    if not isinstance(breadcrumb, str) or not breadcrumb.strip():
-        return result
+    parts: list[str] = []
+    if isinstance(breadcrumb, str) and breadcrumb.strip():
+        raw = _SCHEME_PREFIX_RE.sub("", breadcrumb.strip()).strip()
+        parts = [segment.strip() for segment in _BREADCRUMB_SPLIT_RE.split(raw) if segment.strip()]
 
-    raw = _SCHEME_PREFIX_RE.sub("", breadcrumb.strip()).strip()
-    parts = [segment.strip() for segment in _BREADCRUMB_SPLIT_RE.split(raw) if segment.strip()]
-    if not parts:
-        return result
+    if parts:
+        candidate_host = parts[0].split(":", 1)[0].lower().rstrip(".")
+        if candidate_host and _HOST_RE.match(candidate_host) and candidate_host not in {"google.com", "www.google.com"}:
+            result["host"] = candidate_host
+            result["domain"] = candidate_host.removeprefix("www.")
+            result["resolved_domain"] = result["domain"]
+            result["resolution_basis"] = "breadcrumb"
+        cleaned_segments: list[str] = []
+        for seg in parts[1:]:
+            stripped = seg.strip().rstrip(".\u2026").strip()
+            if stripped and stripped not in {"...", "\u2026"}:
+                cleaned_segments.append(stripped)
+        if cleaned_segments:
+            result["path_hint"] = _clean_path_hint(cleaned_segments[-1])
 
-    candidate_host = parts[0].split(":", 1)[0].lower().rstrip(".")
-    trail = parts[1:]
-
-    if candidate_host and _HOST_RE.match(candidate_host) and candidate_host not in {"google.com", "www.google.com"}:
-        result["host"] = candidate_host
-        result["domain"] = candidate_host.removeprefix("www.")
-
-    cleaned_segments: list[str] = []
-    for seg in trail:
-        stripped = seg.strip().rstrip(".\u2026").strip()
-        if stripped and stripped not in {"...", "\u2026"}:
-            cleaned_segments.append(stripped)
-
-    if cleaned_segments:
-        result["path_hint"] = cleaned_segments[-1]
+    if result["host"] is None:
+        named = website_name_target(website_name)
+        if named:
+            result["domain"] = named["domain"]
+            result["resolved_domain"] = named["domain"]
+            result["path_hint"] = named["path_hint"]
+            result["resolution_basis"] = "website_name"
+    elif result["path_hint"] is None:
+        result["path_hint"] = _platform_hint(result["host"], website_name)
     return result
 
 
@@ -129,18 +209,31 @@ def normalize_organic_item(item: dict[str, Any]) -> dict[str, Any]:
             item["domain"] = target["host"]
             item["resolved_domain"] = target["domain"]
             item["breadcrumb_host"] = target["host"]
+            item["resolution_basis"] = "breadcrumb"
         elif current_domain not in {"google.com", "www.google.com", ""}:
             item["resolved_domain"] = current_domain.removeprefix("www.")
+            item["resolution_basis"] = "domain"
+        elif target["resolution_basis"] == "website_name":
+            # Allowlisted platform only (WEBSITE_NAME_PLATFORMS); domain stays the raw wrapper host.
+            item["resolved_domain"] = target["resolved_domain"]
+            item["resolution_basis"] = "website_name"
         else:
             item["resolved_domain"] = None
-        if target["path_hint"]:
-            item["breadcrumb_path_hint"] = target["path_hint"]
+        hint = target["path_hint"]
+        if not hint and item.get("resolved_domain"):
+            hint = _platform_hint(item["resolved_domain"], item.get("website_name"))
+        if hint:
+            item["breadcrumb_path_hint"] = hint
     else:
         item.setdefault("goto_wrapped", False)
         if current_domain:
             item.setdefault("resolved_domain", current_domain.removeprefix("www."))
         else:
             item.setdefault("resolved_domain", None)
+        if not item.get("breadcrumb_path_hint") and item.get("resolved_domain"):
+            hint = _platform_hint(item["resolved_domain"], item.get("website_name"))
+            if hint:
+                item["breadcrumb_path_hint"] = hint
     return item
 
 
@@ -355,7 +448,7 @@ def organic_item_site_key(entry: dict[str, Any]) -> str | None:
         if key and key not in _GOOGLE_KEYS:
             return key
     target = extract_breadcrumb_target(entry.get("breadcrumb"), entry.get("website_name"))
-    key = site_key(target.get("host"))
+    key = site_key(target.get("host") or target.get("resolved_domain"))
     if key and key not in _GOOGLE_KEYS:
         return key
     name = entry.get("website_name")
@@ -521,6 +614,13 @@ def apply_decoy_assessment(integrity: dict[str, Any], decoy: dict[str, Any]) -> 
     return integrity
 
 
+# Verification outcomes: a second pull that disagreed, a requested pull that did not complete,
+# and "no second pull requested" (the only states eligible for provider_clean_no_decoy_signals).
+_VERIFY_DISAGREED = frozenset({"unstable", "verify_pull_suspect", "disagreed"})
+_VERIFY_FAILED = frozenset({"failed", "verify_failed", "skipped_budget"})
+_VERIFY_NOT_RUN = frozenset({None, "not_run", "not_needed", "skipped_disabled"})
+
+
 def stamp_verified(
     integrity: dict[str, Any],
     *,
@@ -529,30 +629,51 @@ def stamp_verified(
 ) -> dict[str, Any]:
     """Set serp_integrity.verified (fail closed) plus the signals and reasons behind it.
 
-    verified is True only when the provider resolve ran, the block is clean, no decoy signal
-    fired, and the result was either provider-resolved (`from_web` swaps) or confirmed by a
-    stable verification pull. DFS resolve is fail-open, so zero swaps alone never verifies.
+    Rejected (verified False) when the task was unprotected, the block is not clean, any decoy
+    signal fired, or a verification pull disagreed or failed (including a cap too small for the
+    requested second pull). Otherwise the basis is, in order:
+    - `provider_from_web`: the provider resolve swapped results in (`from_web` > 0);
+    - `double_pull_stable`: zero swaps, confirmed by a stable verification pull;
+    - `provider_clean_no_decoy_signals`: zero swaps, resolve_poisoned_results=true confirmed sent,
+      no second pull requested (single-pull serp(), raw live pulls, standard-queue task_get),
+      no decoy signal and no canary hit.
     """
     decoy = integrity.get("decoy") if isinstance(integrity.get("decoy"), dict) else {}
     status = integrity.get("status")
     vstatus = (verification or {}).get("status")
+    provider = decoy.get("provider_resolve")
     reasons: list[str] = []
     if unprotected:
         reasons.append(f"unprotected: resolve_poisoned_results was not sent ({ALLOW_POISONED_ENV}=1)")
     if status != "clean":
         reasons.append(f"serp_integrity.status is {status}")
-    if decoy.get("suspect"):
+    if decoy.get("suspect") or decoy.get("fired"):
         reasons.append("decoy signals fired: " + ", ".join(decoy.get("fired") or []))
-    if decoy.get("provider_resolve") != "resolved" and vstatus != "stable":
-        reasons.append("no from_web swaps and no stable verification pull "
-                       f"(verification: {vstatus or 'not_run'}); DFS resolve is fail-open")
-    verified = not reasons
+    if vstatus in _VERIFY_DISAGREED:
+        reasons.append(f"verification pull disagreed (verification: {vstatus})")
+    if vstatus in _VERIFY_FAILED:
+        detail = (verification or {}).get("reason")
+        reasons.append(f"verification pull failed (verification: {vstatus}"
+                       + (f", {detail})" if detail else ")"))
+    basis: str | None = None
+    if not reasons:
+        if provider == "resolved":
+            basis = "provider_from_web"
+        elif vstatus == "stable":
+            basis = "double_pull_stable"
+        elif vstatus in _VERIFY_NOT_RUN:
+            # Not unprotected, so resolve was confirmed sent (by the client or the task data echo).
+            if integrity.get("canary_hits"):
+                reasons.append("canary hits without from_web swaps or a verification pull: "
+                               + ", ".join(integrity["canary_hits"]))
+            else:
+                basis = "provider_clean_no_decoy_signals"
+        else:
+            reasons.append(f"no verification basis (verification: {vstatus})")
+    verified = not reasons and basis is not None
     integrity["integrity"] = "unprotected" if unprotected else "protected"
     integrity["verified"] = verified
-    integrity["verified_basis"] = (
-        "provider_resolved" if verified and decoy.get("provider_resolve") == "resolved"
-        else "stable_verification_pull" if verified else None
-    )
+    integrity["verified_basis"] = basis if verified else None
     integrity["signals_used"] = sorted((decoy.get("signals") or {}).keys())
     integrity["unverified_reasons"] = reasons
     if verified:
