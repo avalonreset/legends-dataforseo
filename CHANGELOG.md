@@ -2,7 +2,9 @@
 
 ## 0.1.12 - 2026-11-21
 
-Adversarial and battle-test hardening (2026-11-21, pre-release):
+Adversarial and battle-test hardening (2026-11-21):
+
+- Add outlined Legends Font `r1` SVG design cards (`scripts/render_cards.py`, `assets/cards/r1/*.svg`) and refresh `README.md` with the 40-keyword Decoy SERP defense benchmark, 53-route v3 catalog overview, and collapsible `cto-legends` agent setup and CLI/Python reference drawers.
 
 - `docs` discovery uses the certifi-backed TLS context (`HTTPSHandler(context=_ssl_context())`), fixing `CERTIFICATE_VERIFY_FAILED` against `docs.dataforseo.com` on Windows Python 3.12, and `docs search` includes an actionable `legends-dataforseo docs read` parameter lookup hint when `llms.txt` yields zero matches.
 - `resolve_goto_urls` is no longer forced by the transport. `serp(resolve_goto_urls=None)` sends it for `depth <= 10` (page-1 pulls, about 2-3 s) and omits it for deeper rank tracking (redirect unwrapping can add about 40 s; breadcrumb / `website_name` domain extraction is free). CLI: `--resolve-goto-urls` / `--no-resolve-goto-urls`. Raw `api_request` never injects it.
