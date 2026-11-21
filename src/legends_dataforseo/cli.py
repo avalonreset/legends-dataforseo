@@ -11,9 +11,11 @@ from pathlib import Path
 
 from . import __version__
 from .client import (MAX_RESPONSE_BYTES, ApiError, CredentialError, RouteError,
+                     _is_organic_serp_request_path, _organic_serp_operator_floor,
                      _safe_local_path, api_request, competitors, credential_status,
-                     estimate_cost, load_routes, ranked_keywords, relevant_pages,
-                     route_for, normalize_path, resolve_poisoned_default, serp)
+                     estimate_cost, has_serp_cost_multiplier_operator, load_routes,
+                     ranked_keywords, relevant_pages, route_for, normalize_path,
+                     resolve_poisoned_default, serp)
 from .serp_integrity import allow_poisoned
 from .documentation import DocumentationError, docs_index, docs_read, docs_search, docs_sections
 from .output import ResponseFile, response_view, validate_view
@@ -66,6 +68,7 @@ def main(argv=None) -> int:
     estimate.add_argument("--tasks", type=int, default=1)
     estimate.add_argument("--depth", type=int, default=0)
     estimate.add_argument("--items", type=int, default=0)
+    estimate.add_argument("--keyword", default=None, help="Optional Google organic SERP keyword (detects 5x operators)")
     doctor = sub.add_parser("doctor", help="Installation and credential presence; no values")
     doctor.add_argument("--live", action="store_true", help="Also make a no-charge account authentication probe")
     call = sub.add_parser("call", help="Preview or execute a documented v3 endpoint")
@@ -184,7 +187,8 @@ def _run(args):
     elif args.command == "route":
         result = route_for(args.operation)
     elif args.command == "estimate":
-        result = estimate_cost(args.operation, tasks=args.tasks, depth=args.depth, items=args.items)
+        result = estimate_cost(args.operation, tasks=args.tasks, depth=args.depth, items=args.items,
+                               keyword=args.keyword)
     elif args.command == "doctor":
         creds = credential_status()
         login_set = bool(
@@ -269,6 +273,19 @@ def _run(args):
         if not args.execute:
             result = {"preview": True, "path": path, "method": method, "body": payload,
                       "estimated_cost_usd": args.estimated_cost_usd, "max_cost_usd": args.max_cost_usd}
+            standard_path = path.removesuffix(".ai")
+            if (
+                method == "POST"
+                and _is_organic_serp_request_path(standard_path)
+                and isinstance(payload, list)
+                and any(isinstance(t, dict) and has_serp_cost_multiplier_operator(t.get("keyword")) for t in payload)
+            ):
+                floor_usd, op_mult = _organic_serp_operator_floor(standard_path, payload)
+                result["operator_cost_multiplier"] = op_mult
+                result["operator_baseline_cost_usd"] = floor_usd
+                result["warning"] = (
+                    "Keyword contains a Google search operator that triggers DataForSEO's 5x SERP task surcharge."
+                )
         else:
             if method == "POST" and (args.estimated_cost_usd is None or args.max_cost_usd is None):
                 raise RouteError("Paid CLI execution requires --estimated-cost-usd and --max-cost-usd.")

@@ -67,12 +67,12 @@ NEW_ROUTES = {
     "subdomains": ("labs", "POST", "/dataforseo_labs/google/subdomains/live", "live", 0.012),
     "ai-keyword-volume": ("ai_optimization", "POST",
                           "/ai_optimization/ai_keyword_data/keywords_search_volume/live", "live", 0.015),
-    "llm-mentions-top-domains": ("ai_optimization", "POST", "/ai_optimization/llm_mentions/top_domains/live",
+    "llm-mentions-top-domains": ("ai_optimization", "POST", "/ai_optimization/llm_mentions/top_mentioned_domains/live",
                                  "live", 0.02),
-    "llm-mentions-top-pages": ("ai_optimization", "POST", "/ai_optimization/llm_mentions/top_pages/live",
+    "llm-mentions-top-pages": ("ai_optimization", "POST", "/ai_optimization/llm_mentions/top_mentioned_pages/live",
                                "live", 0.02),
     "llm-mentions-aggregated": ("ai_optimization", "POST",
-                                "/ai_optimization/llm_mentions/aggregated_metrics/live", "live", 0.02),
+                                "/ai_optimization/llm_mentions/target_metrics/live", "live", 0.02),
     "llm-responses-chatgpt": ("ai_optimization", "POST", "/ai_optimization/chat_gpt/llm_responses/live",
                               "live", 0.03),
     "llm-responses-claude": ("ai_optimization", "POST", "/ai_optimization/claude/llm_responses/live",
@@ -121,3 +121,52 @@ def test_cli_lists_and_previews_new_routes(capsys):
     assert json.loads(capsys.readouterr().out)["path"] == "/ai_optimization/claude/llm_responses/live"
     assert cli.main(["call", "/v3/on_page/lighthouse/live/json"]) == 0
     assert json.loads(capsys.readouterr().out)["preview"] is True
+
+
+def test_llm_mentions_routes_and_aliases_match_current_v3_paths():
+    expected = {
+        ("mentions", "llm-mentions-search"): "/ai_optimization/llm_mentions/search_mentions/live",
+        ("llm-mentions-top-domains", "llm-mentions-top-mentioned-domains"): (
+            "/ai_optimization/llm_mentions/top_mentioned_domains/live"
+        ),
+        ("llm-mentions-top-pages", "llm-mentions-top-mentioned-pages"): (
+            "/ai_optimization/llm_mentions/top_mentioned_pages/live"
+        ),
+        ("llm-mentions-aggregated", "llm-mentions-target-metrics"): (
+            "/ai_optimization/llm_mentions/target_metrics/live"
+        ),
+    }
+    for (primary, alias), path in expected.items():
+        assert route_for(primary)["path"] == path
+        assert route_for(alias)["path"] == path
+        assert route_for(alias)["name"] == primary
+
+
+def test_docs_search_empty_results_includes_parameter_hint(monkeypatch, tmp_path):
+    import io
+
+    index_text = (
+        "## SERP API\n"
+        "- [Google Organic live](https://docs.dataforseo.com/v3/serp/google/organic/live/advanced.md) - Search results\n"
+    )
+
+    class _Resp(io.BytesIO):
+        def __init__(self, body, url):
+            super().__init__(body.encode("utf-8"))
+            self._url = url
+
+        def geturl(self):
+            return self._url
+
+    monkeypatch.setattr(documentation, "_open", lambda req, timeout: _Resp(index_text, req.full_url))
+    empty = documentation.docs_search("resolve_poisoned_results", cache_dir=tmp_path)
+    assert empty["total_matches"] == 0
+    assert empty["matches"] == []
+    assert empty["hint"] == (
+        "Search scans endpoint titles, paths, and summaries in llms.txt. "
+        "To inspect request/response parameters (e.g. resolve_poisoned_results), "
+        "run 'lds docs read serp/google/organic/live/advanced'."
+    )
+    non_empty = documentation.docs_search("organic", cache_dir=tmp_path)
+    assert non_empty["total_matches"] == 1
+    assert "hint" not in non_empty

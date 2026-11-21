@@ -211,4 +211,11 @@ def docs_search(query, *, limit=20, section=None, **options):
         return sum(3 if term in title_path else 1 for term in terms) if all(term in all_text for term in terms) else 0
     ranked = [(score(entry), entry) for entry in entries]
     ranked = sorted((item for item in ranked if item[0]), key=lambda item: item[0], reverse=True)
-    return {**result, "query": query, "total_matches": len(ranked), "matches": [entry for _, entry in ranked[:limit]]}
+    response = {**result, "query": query, "total_matches": len(ranked), "matches": [entry for _, entry in ranked[:limit]]}
+    if not ranked:
+        response["hint"] = (
+            "Search scans endpoint titles, paths, and summaries in llms.txt. "
+            "To inspect request/response parameters (e.g. resolve_poisoned_results), "
+            "run 'lds docs read serp/google/organic/live/advanced'."
+        )
+    return response

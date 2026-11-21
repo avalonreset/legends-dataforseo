@@ -195,8 +195,21 @@ def normalize_organic_item(item: dict[str, Any]) -> dict[str, Any]:
 
     url = item.get("url")
     current_domain = (item.get("domain") or "").strip().lower()
+    url_host = (
+        (urlparse(url.strip()).hostname or "").lower().rstrip(".")
+        if isinstance(url, str) and "://" in url
+        else ""
+    )
+    url_is_missing_or_google = (
+        not isinstance(url, str)
+        or not url.strip()
+        or is_goto_wrapped_url(url)
+        or site_key(url) == "google.com"
+    )
     wrapped = is_goto_wrapped_url(url) or (
-        current_domain in {"google.com", "www.google.com"} and bool(item.get("breadcrumb"))
+        current_domain in {"google.com", "www.google.com"}
+        and bool(item.get("breadcrumb"))
+        and url_is_missing_or_google
     )
     if wrapped:
         target = extract_breadcrumb_target(item.get("breadcrumb"), item.get("website_name"))
@@ -226,7 +239,16 @@ def normalize_organic_item(item: dict[str, Any]) -> dict[str, Any]:
             item["breadcrumb_path_hint"] = hint
     else:
         item.setdefault("goto_wrapped", False)
-        if current_domain:
+        if (
+            current_domain in {"google.com", "www.google.com", ""}
+            and url_host
+            and site_key(url) != "google.com"
+        ):
+            if current_domain and "raw_domain" not in item:
+                item["raw_domain"] = item.get("domain")
+            item["domain"] = url_host
+            item["resolved_domain"] = url_host.removeprefix("www.")
+        elif current_domain:
             item.setdefault("resolved_domain", current_domain.removeprefix("www."))
         else:
             item.setdefault("resolved_domain", None)

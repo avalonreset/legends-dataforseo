@@ -657,3 +657,166 @@ def test_task_post_enforces_resolve_and_task_get_is_stamped(monkeypatch):
     unconfirmed = api_request("/v3/serp/google/organic/task_get/advanced/q-3", credentials=AUTH)
     # task data echo does not confirm resolve_poisoned_results=true: fail closed
     assert _integrity(unconfirmed)["verified"] is False and _integrity(unconfirmed)["integrity"] == "unprotected"
+
+
+# --- 0.1.12 battle-test fixes (Bugs #7, #8, #9) ----------------------------------------------
+
+def test_normalize_organic_item_unwrapped_url_with_google_domain_is_not_goto_wrapped():
+    edge_c = {
+        "type": "organic",
+        "url": "https://www.reddit.com/r/Phoenixville/comments/1abc/test/",
+        "domain": "google.com",
+        "breadcrumb": "30+ comments \u00b7 2 years ago",
+        "website_name": "Reddit \u00b7 r/Phoenixville",
+    }
+    normalize_organic_item(edge_c)
+    assert edge_c["goto_wrapped"] is False
+    assert edge_c["domain"] == "www.reddit.com"
+    assert edge_c["resolved_domain"] == "reddit.com"
+    assert edge_c["raw_domain"] == "google.com"
+    assert edge_c["breadcrumb_path_hint"] == "r/Phoenixville"
+
+    no_name = {
+        "type": "organic",
+        "url": "https://www.reddit.com/r/Phoenixville/comments/1abc/test/",
+        "domain": "google.com",
+        "breadcrumb": "30+ comments \u00b7 2 years ago",
+    }
+    normalize_organic_item(no_name)
+    assert no_name["goto_wrapped"] is False
+    assert no_name["domain"] == "www.reddit.com"
+    assert no_name["resolved_domain"] == "reddit.com"
+
+    # Missing URL or Google-host URL with google.com domain and breadcrumb still counts as wrapped.
+    missing_url = {
+        "type": "organic",
+        "url": None,
+        "domain": "google.com",
+        "breadcrumb": "https://www.gattilaw.com \u203a Locations",
+    }
+    normalize_organic_item(missing_url)
+    assert missing_url["goto_wrapped"] is True
+    assert missing_url["resolved_domain"] == "gattilaw.com"
+
+    google_url = {
+        "type": "organic",
+        "url": "https://www.google.com/search?q=gattilaw",
+        "domain": "google.com",
+        "breadcrumb": "https://www.gattilaw.com \u203a Locations",
+    }
+    normalize_organic_item(google_url)
+    assert google_url["goto_wrapped"] is True
+    assert google_url["resolved_domain"] == "gattilaw.com"
+
+
+def test_serp_5x_operator_detection_and_cost_preflight(monkeypatch, capsys):
+    from legends_dataforseo import estimate_cost, has_serp_cost_multiplier_operator
+
+    operators = [
+        "allinanchor:seo", "allintext:seo", "allintitle:seo", "allinurl:seo",
+        "cache:example.com", "define:serp", "definition:serp", "filetype:pdf report",
+        "id:123", "inanchor:seo", "info:example.com", "intext:seo",
+        "intitle:seo", "inurl:blog", "link:example.com", "site:reddit.com auto repair",
+        "auto repair -site:yelp.com", "SITE:REDDIT.COM", "site%3Areddit.com+auto+repair",
+    ]
+    for kw in operators:
+        assert has_serp_cost_multiplier_operator(kw) is True, kw
+
+    for benign in ("website: example", "site reliability engineer", "define love", "", None, 42):
+        assert has_serp_cost_multiplier_operator(benign) is False, benign
+
+    est = estimate_cost("serp", tasks=1, depth=10, keyword="site:reddit.com auto repair")
+    assert est["estimated_cost_usd"] == 0.01
+    assert est["operator_cost_multiplier"] == 5
+
+    queue_est = estimate_cost("serp-task-post", tasks=1, depth=10, keyword="inurl:blog")
+    assert queue_est["estimated_cost_usd"] == 0.006
+    assert queue_est["operator_cost_multiplier"] == 5
+
+    plain_est = estimate_cost("serp", tasks=1, depth=10, keyword="auto repair")
+    assert plain_est["estimated_cost_usd"] == 0.002
+    assert "operator_cost_multiplier" not in plain_est
+
+    maps_est = estimate_cost("maps", tasks=1, depth=100, keyword="site:reddit.com")
+    assert maps_est["estimated_cost_usd"] == 0.002
+    assert "operator_cost_multiplier" not in maps_est
+
+    # serp() refuses under-budgeted 5x operator queries before HTTP.
+    sent = fake_transport(monkeypatch, [renv(REAL, cost=0.02), renv(REAL, cost=0.02)])
+    with pytest.raises(CostLimitError):
+        serp("site:reddit.com auto repair", credentials=AUTH, confirm=True,
+             estimated_cost_usd=0.004, max_cost_usd=0.01)
+    assert sent == []
+
+    # Properly budgeted 5x operator query succeeds without double-multiplying.
+    ok = serp("site:reddit.com auto repair", credentials=AUTH, confirm=True,
+              estimated_cost_usd=0.02, max_cost_usd=0.02)
+    assert len(sent) == 1
+    assert ok["legends_serp"]["operator_cost_multiplier"] == 5
+
+    # Raw api_request() also enforces the 5x operator floor before HTTP.
+    with pytest.raises(CostLimitError):
+        api_request(ORGANIC_LIVE, [{"keyword": "site:reddit.com auto repair", "location_code": 2840}],
+                    credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.01)
+    assert len(sent) == 1
+
+    raw_ok = api_request(
+        ORGANIC_LIVE,
+        [{"keyword": "site:reddit.com auto repair", "location_code": 2840, "resolve_poisoned_results": True}],
+        credentials=AUTH, confirm=True, estimated_cost_usd=0.02, max_cost_usd=0.02,
+    )
+    assert len(sent) == 2 and raw_ok["status_code"] == 20000
+
+    # CLI estimate and preview surface operator_cost_multiplier.
+    assert cli.main(["estimate", "serp", "--depth", "10", "--keyword", "filetype:pdf annual report"]) == 0
+    cli_est = json.loads(capsys.readouterr().out)
+    assert cli_est["estimated_cost_usd"] == 0.01 and cli_est["operator_cost_multiplier"] == 5
+
+    assert cli.main(["serp", "site:reddit.com auto repair"]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["preview"] is True
+    assert preview["operator_cost_multiplier"] == 5
+    assert preview["operator_baseline_cost_usd"] == 0.02
+    assert "5x" in preview["warning"]
+
+
+def test_web_mode_blocks_encoded_udm_and_always_rejects_udm_plus_resolve(monkeypatch):
+    sent = fake_transport(monkeypatch, [envelope(block(REAL))])
+    encoded_cases = [
+        {"keyword": "x", "location_code": 2840, "search_param": "udm%3D14"},
+        {"keyword": "x", "location_code": 2840, "search_param": "udm%253D14"},
+        {"keyword": "x", "location_code": 2840, "search_param": "gl=us&UDM%3dWEB"},
+        {"keyword": "x", "location_code": 2840, "url": "https://www.google.com/search?q=x&udm%3D14"},
+    ]
+    for task in encoded_cases:
+        assert client._web_mode(task) is True, task
+        with pytest.raises(RouteError):
+            api_request(ORGANIC_LIVE, [task], credentials=AUTH, confirm=True)
+    assert sent == []
+
+    # Non-web udm values must not false-positive.
+    assert client._web_mode({"search_param": "udm=140"}) is False
+    assert client._web_mode({"search_param": "udm=webinar"}) is False
+
+    # Even with LEGENDS_DFS_ALLOW_POISONED=1, udm=14/web + resolve_poisoned_results=True is rejected.
+    monkeypatch.setenv(ALLOW_POISONED_ENV, "1")
+    invalid_pairs = [
+        {"keyword": "x", "location_code": 2840, "search_param": "udm=14", "resolve_poisoned_results": True},
+        {"keyword": "x", "location_code": 2840, "search_param": "udm%3D14", "resolve_poisoned_results": True},
+        {"keyword": "x", "location_code": 2840, "url": "https://www.google.com/search?q=x&udm=web",
+         "resolve_poisoned_results": True},
+    ]
+    for task in invalid_pairs:
+        with pytest.raises(RouteError):
+            api_request(ORGANIC_LIVE, [task], credentials=AUTH, confirm=True)
+    assert sent == []
+
+    # Encoded udm without resolve_poisoned_results=True is allowed under escape hatch and stamped unprotected.
+    allowed = api_request(
+        ORGANIC_LIVE,
+        [{"keyword": "x", "location_code": 2840, "search_param": "udm%3D14"}],
+        credentials=AUTH, confirm=True,
+    )
+    assert len(sent) == 1
+    assert "resolve_poisoned_results" not in sent[0][1][0]
+    assert _integrity(allowed)["integrity"] == "unprotected" and _integrity(allowed)["verified"] is False

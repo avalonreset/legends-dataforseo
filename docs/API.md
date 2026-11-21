@@ -101,8 +101,9 @@ cost, top-level status, and caller-supplied consumer label. Use a non-sensitive
 consumer label. Ledger errors warn without hiding the completed API response.
 
 Offline helpers: `load_routes()`, `route_for(operation)`,
-`estimate_cost(operation, *, tasks=1, depth=0, items=0)`, `total_cost(responses)`,
-`ledger_path()`. `write_json(Path, payload)` explicitly saves caller-selected data.
+`estimate_cost(operation, *, tasks=1, depth=0, items=0, keyword=None)`,
+`has_serp_cost_multiplier_operator(keyword)`, `SERP_OPERATOR_COST_MULTIPLIER`,
+`total_cost(responses)`, `ledger_path()`. `write_json(Path, payload)` explicitly saves caller-selected data.
 Organic SERP integrity helpers: `is_goto_wrapped_url(url)`,
 `extract_breadcrumb_target(breadcrumb, website_name=None)`,
 `normalize_organic_item(item)`, `assess_serp_integrity(result_block, *, task_data=None)`,

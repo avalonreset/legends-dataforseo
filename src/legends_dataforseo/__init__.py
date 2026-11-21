@@ -4,7 +4,8 @@ __version__ = "0.1.12"
 
 from .client import (
     API_ROOT, ApiError, CostLimitError, CredentialError, Credentials, RouteError,
-    SERP_TIMEOUT_S, UnverifiedSerpError, api_request, business, competitors, credential_status, demand, estimate_cost,
+    SERP_OPERATOR_COST_MULTIPLIER, SERP_TIMEOUT_S, UnverifiedSerpError, api_request, business, competitors,
+    credential_status, demand, estimate_cost, has_serp_cost_multiplier_operator,
     ledger_path, load_credentials, load_routes, maps, ranked_keywords,
     relevant_pages, resolve_poisoned_default, route_for, serp, site_traffic, total_cost, write_json,
 )
@@ -44,6 +45,7 @@ __all__ = [
     "normalize_organic_item", "normalize_serp_envelope",
     "DECOY_THRESHOLDS", "apply_decoy_assessment", "assess_decoy_signals", "organic_item_site_key", "organic_site_keys",
     "overlap_ratio", "site_key", "resolve_poisoned_default", "site_traffic",
-    "ALLOW_POISONED_ENV", "SERP_TIMEOUT_S", "UnverifiedSerpError", "allow_poisoned",
+    "ALLOW_POISONED_ENV", "SERP_OPERATOR_COST_MULTIPLIER", "SERP_TIMEOUT_S", "UnverifiedSerpError", "allow_poisoned",
+    "has_serp_cost_multiplier_operator",
     "stamp_envelope_verified", "stamp_verified", "WEBSITE_NAME_PLATFORMS", "website_name_target",
 ]

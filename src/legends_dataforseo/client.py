@@ -17,6 +17,7 @@ from pathlib import Path
 import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import unquote, unquote_plus
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 API_ROOT = "https://api.dataforseo.com/v3"
@@ -131,9 +132,25 @@ def route_for(operation: str) -> dict[str, Any]:
     raise RouteError("Unknown operation. Use 'legends-dataforseo routes' or a documented v3 path.")
 
 
+SERP_OPERATOR_COST_MULTIPLIER = 5
+_SERP_5X_OPERATOR_RE = re.compile(
+    r"(?:^|\s)-?(?:allinanchor|allintext|allintitle|allinurl|cache|define|definition|"
+    r"filetype|id|inanchor|info|intext|intitle|inurl|link|site):",
+    re.IGNORECASE,
+)
+
+
+def has_serp_cost_multiplier_operator(keyword: Any) -> bool:
+    """Return True when a Google organic SERP keyword triggers DataForSEO's 5x operator surcharge."""
+    if not isinstance(keyword, str) or not keyword.strip():
+        return False
+    decoded = unquote_plus(unquote_plus(keyword))
+    return bool(_SERP_5X_OPERATOR_RE.search(keyword) or _SERP_5X_OPERATOR_RE.search(decoded))
+
+
 def estimate_cost(operation: str, *, tasks: int = 1, depth: int = 0,
-                  items: int = 0) -> dict[str, Any]:
-    """Offline baseline estimate; excludes provider surcharges and optional flags."""
+                  items: int = 0, keyword: str | None = None) -> dict[str, Any]:
+    """Offline baseline estimate; applies the 5x Google organic operator surcharge when keyword is given."""
     if any(type(value) is not int for value in (tasks, depth, items)):
         raise ValueError("tasks, depth, and items must be integers")
     if tasks < 1 or depth < 0 or items < 0:
@@ -141,14 +158,50 @@ def estimate_cost(operation: str, *, tasks: int = 1, depth: int = 0,
     route = route_for(operation)
     model = route.get("estimate")
     amount = None
+    operator_multiplier = 1
     if not route["charged"]:
         amount = 0.0
     elif model:
         multiplier = max(1, math.ceil(depth / model["depth_unit"])) if model.get("depth_unit") else 1
         amount = round(tasks * (model["base_usd"] * multiplier + model.get("item_usd", 0) * items), 6)
-    return {"route": route["name"], "charged": route["charged"], "estimate_only": True,
-            "tasks": tasks, "depth": depth, "items": items, "estimated_cost_usd": amount,
-            "note": "Baseline only. Review current pricing and all task options before execution."}
+        if route["path"].startswith("/serp/google/organic/") and has_serp_cost_multiplier_operator(keyword):
+            operator_multiplier = SERP_OPERATOR_COST_MULTIPLIER
+            amount = round(amount * operator_multiplier, 6)
+    result: dict[str, Any] = {
+        "route": route["name"], "charged": route["charged"], "estimate_only": True,
+        "tasks": tasks, "depth": depth, "items": items, "estimated_cost_usd": amount,
+        "note": "Baseline only. Review current pricing and all task options before execution.",
+    }
+    if operator_multiplier > 1:
+        result["operator_cost_multiplier"] = operator_multiplier
+        result["note"] = (
+            "Includes 5x Google organic search-operator surcharge. "
+            "Review current pricing and all task options before execution."
+        )
+    return result
+
+
+def _organic_serp_operator_floor(standard_path: str, payload: list[dict[str, Any]]) -> tuple[float, int]:
+    """Return (minimum_baseline_usd, max_operator_multiplier) for Google organic SERP task payloads."""
+    route_name = "serp-task-post" if standard_path.endswith("/task_post") else "serp"
+    default_base = 0.0012 if route_name == "serp-task-post" else 0.002
+    total = 0.0
+    max_mult = 1
+    for task in payload:
+        kw = task.get("keyword")
+        depth = task.get("depth")
+        d = depth if type(depth) is int and depth >= 0 else 10
+        est = estimate_cost(route_name, tasks=1, depth=d, keyword=kw)
+        op_mult = int(est.get("operator_cost_multiplier") or 1)
+        if op_mult > max_mult:
+            max_mult = op_mult
+        base_usd = float(est["estimated_cost_usd"] or round(default_base * op_mult, 6))
+        resolve_usd = 0.0
+        if task.get("resolve_poisoned_results") is True:
+            resolve_est = estimate_cost(route_name, tasks=1, depth=10, keyword=kw)
+            resolve_usd = float(resolve_est["estimated_cost_usd"] or round(default_base * op_mult, 6))
+        total += base_usd + resolve_usd
+    return round(total, 6), max_mult
 
 
 def normalize_path(path: str) -> str:
@@ -269,11 +322,28 @@ def api_request(
         raise CostLimitError("Paid or unclassified requests require confirm=True before HTTP.")
     resolve_sent: bool | None = None
     if verb == "POST" and _is_organic_serp_request_path(standard_path):
+        pre_missing = [idx for idx, task in enumerate(payload) if task.get("resolve_poisoned_results") is None]
         payload, injected = _enforce_resolve(payload)
         resolve_sent = all(task.get("resolve_poisoned_results") is True for task in payload)
-        if injected and estimated_cost_usd is not None:
-            surcharge = float(estimate_cost("serp", tasks=1, depth=10)["estimated_cost_usd"] or 0.002)
-            estimated_cost_usd = round(_money(estimated_cost_usd, "estimated_cost_usd") + surcharge * injected, 6)
+        if estimated_cost_usd is not None:
+            est_val = _money(estimated_cost_usd, "estimated_cost_usd")
+            route_name = "serp-task-post" if standard_path.endswith("/task_post") else "serp"
+            default_base = 0.0012 if route_name == "serp-task-post" else 0.002
+            if injected:
+                surcharge_total = 0.0
+                for idx in pre_missing:
+                    if payload[idx].get("resolve_poisoned_results") is True:
+                        kw = payload[idx].get("keyword")
+                        surcharge_est = estimate_cost(route_name, tasks=1, depth=10, keyword=kw)
+                        op_mult = int(surcharge_est.get("operator_cost_multiplier") or 1)
+                        surcharge_total += float(
+                            surcharge_est["estimated_cost_usd"] or round(default_base * op_mult, 6)
+                        )
+                est_val = round(est_val + surcharge_total, 6)
+            floor_usd, op_mult = _organic_serp_operator_floor(standard_path, payload)
+            if op_mult > 1:
+                est_val = max(est_val, floor_usd)
+            estimated_cost_usd = est_val
     estimate = None if estimated_cost_usd is None else _money(estimated_cost_usd, "estimated_cost_usd")
     limit = None if max_cost_usd is None else _money(max_cost_usd, "max_cost_usd")
     if limit is not None:
@@ -362,9 +432,18 @@ def _is_organic_serp_result_path(standard_path: str) -> bool:
 _is_organic_task_path = _is_organic_serp_request_path
 
 
+_WEB_UDM_RE = re.compile(r"(?:^|[?&;\s])udm\s*=\s*(?:14|web)(?:$|[&#;\s])", re.IGNORECASE)
+
+
 def _web_mode(task: dict[str, Any]) -> bool:
-    text = " ".join(str(task.get(k) or "") for k in ("url", "search_param")).lower()
-    return "udm=14" in text or "udm=web" in text
+    for key in ("url", "search_param"):
+        raw = str(task.get(key) or "")
+        if not raw:
+            continue
+        decoded = unquote(unquote(raw))
+        if _WEB_UDM_RE.search(raw) or _WEB_UDM_RE.search(decoded):
+            return True
+    return False
 
 
 def _enforce_resolve(payload: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
@@ -376,10 +455,16 @@ def _enforce_resolve(payload: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
     for task in payload:
         body = dict(task)
         value = body.get("resolve_poisoned_results", None)
-        if _web_mode(body) and not escape:
+        is_web = _web_mode(body)
+        if is_web and value is True:
+            raise RouteError(
+                "udm=14 / udm=web cannot be combined with resolve_poisoned_results=true; "
+                "DataForSEO rejects this parameter combination."
+            )
+        if is_web and not escape:
             raise RouteError("udm=14 / udm=web cannot be combined with resolve_poisoned_results; such tasks bypass "
                              f"decoy defense and need {ALLOW_POISONED_ENV}=1 (results are stamped unprotected).")
-        if value is None and not _web_mode(body):
+        if value is None and not is_web:
             body["resolve_poisoned_results"] = True
             injected += 1
         elif value is not True and not escape:
@@ -636,11 +721,20 @@ def _serp_impl(
         task["resolve_goto_urls"] = True
 
     path = route_for("serp")["path"]
+    op_mult = SERP_OPERATOR_COST_MULTIPLIER if has_serp_cost_multiplier_operator(keyword) else 1
     base_step = float(
-        estimate_cost("serp", tasks=1, depth=depth if type(depth) is int and depth >= 0 else 10)["estimated_cost_usd"]
-        or 0.002
+        estimate_cost(
+            "serp",
+            tasks=1,
+            depth=depth if type(depth) is int and depth >= 0 else 10,
+            keyword=keyword,
+        )["estimated_cost_usd"]
+        or round(0.002 * op_mult, 6)
     )
-    resolve_surcharge = float(estimate_cost("serp", tasks=1, depth=10)["estimated_cost_usd"] or 0.002)
+    resolve_surcharge = float(
+        estimate_cost("serp", tasks=1, depth=10, keyword=keyword)["estimated_cost_usd"]
+        or round(0.002 * op_mult, 6)
+    )
 
     def _step_estimate(with_resolve: bool) -> float:
         return round(base_step + (resolve_surcharge if with_resolve else 0.0), 6)
@@ -912,6 +1006,8 @@ def _serp_impl(
         "latency_ms_total": total_latency,
         "budget_exhausted": budget_exhausted,
     }
+    if op_mult > 1:
+        result["legends_serp"]["operator_cost_multiplier"] = op_mult
     if not verified and resolve and not allow_unverified:
         reasons = sorted({r for b in blocks for r in b.get("unverified_reasons") or []}) or [
             "no organic result block to verify"]

@@ -484,10 +484,12 @@
     },
     {
       "name": "mentions",
-      "aliases": [],
+      "aliases": [
+        "llm-mentions-search"
+      ],
       "kind": "api",
       "method": "POST",
-      "path": "/ai_optimization/llm_mentions/search/live",
+      "path": "/ai_optimization/llm_mentions/search_mentions/live",
       "family": "llm-mentions",
       "section": "ai_optimization",
       "mode": "live",
@@ -721,10 +723,12 @@
     },
     {
       "name": "llm-mentions-top-domains",
-      "aliases": [],
+      "aliases": [
+        "llm-mentions-top-mentioned-domains"
+      ],
       "kind": "api",
       "method": "POST",
-      "path": "/ai_optimization/llm_mentions/top_domains/live",
+      "path": "/ai_optimization/llm_mentions/top_mentioned_domains/live",
       "family": "llm-mentions",
       "section": "ai_optimization",
       "mode": "live",
@@ -739,10 +743,12 @@
     },
     {
       "name": "llm-mentions-top-pages",
-      "aliases": [],
+      "aliases": [
+        "llm-mentions-top-mentioned-pages"
+      ],
       "kind": "api",
       "method": "POST",
-      "path": "/ai_optimization/llm_mentions/top_pages/live",
+      "path": "/ai_optimization/llm_mentions/top_mentioned_pages/live",
       "family": "llm-mentions",
       "section": "ai_optimization",
       "mode": "live",
@@ -757,10 +763,12 @@
     },
     {
       "name": "llm-mentions-aggregated",
-      "aliases": [],
+      "aliases": [
+        "llm-mentions-target-metrics"
+      ],
       "kind": "api",
       "method": "POST",
-      "path": "/ai_optimization/llm_mentions/aggregated_metrics/live",
+      "path": "/ai_optimization/llm_mentions/target_metrics/live",
       "family": "llm-mentions",
       "section": "ai_optimization",
       "mode": "live",
