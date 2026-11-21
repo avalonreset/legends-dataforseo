@@ -37,9 +37,10 @@ otherwise GET. POST requires a nonempty list of task objects. A live SERP call
 accepts exactly one task; a SERP queue POST accepts at most 100. Use raw
 `api_request` for endpoint-specific fields not exposed by the named helpers.
 
-`path` is relative to v3, optionally beginning `/v3/`. Absolute URLs, query
-strings, encoded path traversal, and redirects are rejected. No alternate host
-option exists. TLS verification remains enabled.
+`path` is relative to v3, optionally beginning `/v3/` (endpoint segments are
+normalized to lowercase while preserving task ID case on `task_get`). Absolute
+URLs, query strings, encoded path traversal, and redirects are rejected. No
+alternate host option exists. TLS verification remains enabled.
 An optional terminal `.ai` suffix is accepted explicitly. It is never added
 automatically. Provider AI responses can differ from standard task envelopes and
 omit cost; see [response modes](WORKFLOWS.md#optional-provider-ai-responses).
@@ -131,9 +132,12 @@ that to 3/40, so the defense is mandatory and the library fails closed.
 **Resolve is mandatory.** Every Google organic request (`live/advanced`,
 `live/regular`, `live/html`, standard-queue `task_post`) carries
 `resolve_poisoned_results: true`. `serp()` always sends it. Raw `api_request`
-injects it when absent (and raises its estimate by one page per injected task)
+injects it when absent (and floors any supplied `estimated_cost_usd` against
+the task depth/page count, mandatory resolve page, and 5x search-operator
+surcharge across `keyword` and `url` `q=` parameters)
 and raises `RouteError` for an explicit non-true value or for `udm=14` /
-`udm=web` tasks, which DataForSEO cannot combine with resolve. Organic result
+`udm=web` tasks (including URL-encoded variants and even when the escape hatch
+is set alongside `resolve_poisoned_results=True`), which DataForSEO cannot combine with resolve. Organic result
 envelopes (`live/*` and standard-queue `task_get/{advanced,regular,html}/{id}`)
 are normalized and stamped; a `task_get` reads protection from the task data
 echo. `resolve_goto_urls` is never injected by `api_request` (it adds redirect
@@ -173,7 +177,9 @@ google.com` and no `timestamp`. Site keys therefore come from
 `organic_item_site_key(item)`: resolved domain, then breadcrumb host, then the
 closed `WEBSITE_NAME_PLATFORMS` allowlist (reddit, youtube, facebook,
 instagram, x, twitter, linkedin, tiktok, yelp, nextdoor, quora, pinterest,
-tripadvisor, medium), then a `website_name` slug key, and never `google.com`.
+tripadvisor, medium), then a `website_name` slug key, and never bare/www
+`google.<tld>` wrapper hosts (while preserving real Google product subdomains
+such as `developers.google.com` or `cloud.google.com`).
 `extract_breadcrumb_target` and `normalize_organic_item` never turn engagement
 breadcrumb text (`30+ comments · 2 years ago`) into `breadcrumb_path_hint`.
 When the breadcrumb has no host, an allowlisted `website_name` such as
@@ -202,7 +208,8 @@ per-process lock per normalized keyword so same-keyword calls run one at a time.
 unprotected=False)` sets `serp_integrity.verified`, `integrity`
 (`protected`/`unprotected`), `verified_basis`, `signals_used` and
 `unverified_reasons` (and `unverified = true` when not verified). It rejects
-when the task was unprotected, the block is not `clean`, any decoy signal
+when the task was unprotected, `organic_count == 0` (such as unparsed
+`live/html` or `task_get/html` blocks), the block is not `clean`, any decoy signal
 fired, or a verification pull disagreed (`unstable`, `verify_pull_suspect`) or
 failed (`failed`, `verify_failed`). Otherwise `verified_basis` is
 `provider_from_web` (resolve swapped results in, `from_web > 0`),

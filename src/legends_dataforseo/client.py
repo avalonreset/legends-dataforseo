@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import tempfile
 import threading
 import time
 import warnings
@@ -17,7 +18,7 @@ from pathlib import Path
 import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import unquote, unquote_plus
+from urllib.parse import parse_qs, unquote, unquote_plus, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 API_ROOT = "https://api.dataforseo.com/v3"
@@ -134,7 +135,7 @@ def route_for(operation: str) -> dict[str, Any]:
 
 SERP_OPERATOR_COST_MULTIPLIER = 5
 _SERP_5X_OPERATOR_RE = re.compile(
-    r"(?:^|\s)-?(?:allinanchor|allintext|allintitle|allinurl|cache|define|definition|"
+    r"(?:^|[\s(|\"'+\[,;])[-+]?(?:allinanchor|allintext|allintitle|allinurl|cache|define|definition|"
     r"filetype|id|inanchor|info|intext|intitle|inurl|link|site):",
     re.IGNORECASE,
 )
@@ -146,6 +147,35 @@ def has_serp_cost_multiplier_operator(keyword: Any) -> bool:
         return False
     decoded = unquote_plus(unquote_plus(keyword))
     return bool(_SERP_5X_OPERATOR_RE.search(keyword) or _SERP_5X_OPERATOR_RE.search(decoded))
+
+
+def _task_has_operator(task: dict[str, Any]) -> bool:
+    if has_serp_cost_multiplier_operator(task.get("keyword")):
+        return True
+    raw_url = task.get("url")
+    if isinstance(raw_url, str) and raw_url.strip():
+        for candidate_url in (raw_url, unquote(raw_url)):
+            query = urlsplit(candidate_url).query
+            if not query:
+                continue
+            params = parse_qs(query, keep_blank_values=False)
+            for key in ("q", "as_q"):
+                for val in params.get(key, ()):
+                    if has_serp_cost_multiplier_operator(val):
+                        return True
+    return False
+
+
+def _task_effective_depth(task: dict[str, Any]) -> int:
+    depth = task.get("depth")
+    d_val = 0
+    if isinstance(depth, (int, float)) and not isinstance(depth, bool) and math.isfinite(depth) and depth > 0:
+        d_val = math.ceil(depth)
+    pages = task.get("max_crawl_pages")
+    p_val = 0
+    if isinstance(pages, (int, float)) and not isinstance(pages, bool) and math.isfinite(pages) and pages > 0:
+        p_val = math.ceil(pages) * 10
+    return max(d_val, p_val) or 10
 
 
 def estimate_cost(operation: str, *, tasks: int = 1, depth: int = 0,
@@ -185,33 +215,56 @@ def _organic_serp_operator_floor(standard_path: str, payload: list[dict[str, Any
     """Return (minimum_baseline_usd, max_operator_multiplier) for Google organic SERP task payloads."""
     route_name = "serp-task-post" if standard_path.endswith("/task_post") else "serp"
     default_base = 0.0012 if route_name == "serp-task-post" else 0.002
+    addon_page_usd = 0.0006 if route_name == "serp-task-post" else 0.002
     total = 0.0
     max_mult = 1
     for task in payload:
-        kw = task.get("keyword")
-        depth = task.get("depth")
-        d = depth if type(depth) is int and depth >= 0 else 10
-        est = estimate_cost(route_name, tasks=1, depth=d, keyword=kw)
+        kw_probe = "site:x" if _task_has_operator(task) else None
+        d = _task_effective_depth(task)
+        est = estimate_cost(route_name, tasks=1, depth=d, keyword=kw_probe)
         op_mult = int(est.get("operator_cost_multiplier") or 1)
         if op_mult > max_mult:
             max_mult = op_mult
         base_usd = float(est["estimated_cost_usd"] or round(default_base * op_mult, 6))
         resolve_usd = 0.0
         if task.get("resolve_poisoned_results") is True:
-            resolve_est = estimate_cost(route_name, tasks=1, depth=10, keyword=kw)
+            resolve_est = estimate_cost(route_name, tasks=1, depth=10, keyword=kw_probe)
             resolve_usd = float(resolve_est["estimated_cost_usd"] or round(default_base * op_mult, 6))
-        total += base_usd + resolve_usd
+        addons_usd = 0.0
+        if task.get("load_async_ai_overview") is True:
+            addons_usd += addon_page_usd
+        if task.get("calculate_rectangles") is True:
+            addons_usd += addon_page_usd
+        paa_clicks = task.get("people_also_ask_click_depth")
+        if isinstance(paa_clicks, (int, float)) and not isinstance(paa_clicks, bool) and math.isfinite(paa_clicks) and paa_clicks > 0:
+            addons_usd += 0.00015 * min(4, math.ceil(paa_clicks))
+        total += base_usd + resolve_usd + addons_usd
     return round(total, 6), max_mult
+
+
+_TASK_GET_PREFIX_RE = re.compile(
+    r"^(/[A-Za-z0-9_/-]+/task_get/(?:advanced/|regular/|html/)?)([A-Za-z0-9_-]+)$",
+    re.IGNORECASE,
+)
 
 
 def normalize_path(path: str) -> str:
     # Never accept a URL, query string, encoded traversal, or authority override.
-    if not isinstance(path, str) or not re.fullmatch(r"/?[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\.ai)?", path):
+    if not isinstance(path, str) or not re.fullmatch(
+        r"/?[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*(?:\.[Aa][Ii])?", path
+    ):
         raise RouteError("Use an API v3 relative endpoint path without URL, query, or traversal.")
     normalized = "/" + path.lstrip("/")
-    if normalized.startswith("/v3/"):
+    if normalized[:4].lower() == "/v3/":
         normalized = normalized[3:]
-    return normalized
+    has_ai = normalized.lower().endswith(".ai")
+    core = normalized[:-3] if has_ai else normalized
+    m_get = _TASK_GET_PREFIX_RE.match(core)
+    if m_get:
+        core = m_get.group(1).lower() + m_get.group(2)
+    else:
+        core = core.lower()
+    return core + (".ai" if has_ai else "")
 
 
 def _known_free_get(path: str) -> bool:
@@ -322,28 +375,12 @@ def api_request(
         raise CostLimitError("Paid or unclassified requests require confirm=True before HTTP.")
     resolve_sent: bool | None = None
     if verb == "POST" and _is_organic_serp_request_path(standard_path):
-        pre_missing = [idx for idx, task in enumerate(payload) if task.get("resolve_poisoned_results") is None]
-        payload, injected = _enforce_resolve(payload)
+        payload, _ = _enforce_resolve(payload)
         resolve_sent = all(task.get("resolve_poisoned_results") is True for task in payload)
         if estimated_cost_usd is not None:
             est_val = _money(estimated_cost_usd, "estimated_cost_usd")
-            route_name = "serp-task-post" if standard_path.endswith("/task_post") else "serp"
-            default_base = 0.0012 if route_name == "serp-task-post" else 0.002
-            if injected:
-                surcharge_total = 0.0
-                for idx in pre_missing:
-                    if payload[idx].get("resolve_poisoned_results") is True:
-                        kw = payload[idx].get("keyword")
-                        surcharge_est = estimate_cost(route_name, tasks=1, depth=10, keyword=kw)
-                        op_mult = int(surcharge_est.get("operator_cost_multiplier") or 1)
-                        surcharge_total += float(
-                            surcharge_est["estimated_cost_usd"] or round(default_base * op_mult, 6)
-                        )
-                est_val = round(est_val + surcharge_total, 6)
-            floor_usd, op_mult = _organic_serp_operator_floor(standard_path, payload)
-            if op_mult > 1:
-                est_val = max(est_val, floor_usd)
-            estimated_cost_usd = est_val
+            floor_usd, _ = _organic_serp_operator_floor(standard_path, payload)
+            estimated_cost_usd = max(est_val, floor_usd)
     estimate = None if estimated_cost_usd is None else _money(estimated_cost_usd, "estimated_cost_usd")
     limit = None if max_cost_usd is None else _money(max_cost_usd, "max_cost_usd")
     if limit is not None:
@@ -623,11 +660,27 @@ def site_traffic(
                 fresh[key] = 0.0
                 rows[key] = {"etv": 0.0, "ts": now.isoformat()}
         cache[bucket] = rows
+        tmp_file: Path | None = None
         try:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(json.dumps(cache), encoding="utf-8")
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=cache_file.parent, delete=False
+            ) as handle:
+                tmp_file = Path(handle.name)
+                json.dump(cache, handle)
+            try:
+                os.chmod(tmp_file, 0o600)
+            except OSError:
+                pass
+            tmp_file.replace(cache_file)
         except OSError:
             pass
+        finally:
+            if tmp_file is not None:
+                try:
+                    tmp_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
     return fresh
 
 
@@ -684,6 +737,10 @@ def _serp_impl(
         overlap_ratio,
     )
 
+    if not isinstance(keyword, str) or not keyword.strip():
+        raise RouteError("keyword must be a nonempty string.")
+    if type(depth) is not int or depth < 1 or depth > 700:
+        raise ValueError("depth must be an integer between 1 and 700")
     if type(max_poison_retries) is not int or max_poison_retries < 0:
         raise ValueError("max_poison_retries must be a nonnegative integer")
     if type(verify_no_swap) is not bool:
@@ -716,7 +773,7 @@ def _serp_impl(
     if os is not None:
         task["os"] = os
     if resolve_goto_urls is None:
-        resolve_goto_urls = not (type(depth) is int and depth > 10)
+        resolve_goto_urls = depth <= 10
     if resolve_goto_urls:
         task["resolve_goto_urls"] = True
 
@@ -726,7 +783,7 @@ def _serp_impl(
         estimate_cost(
             "serp",
             tasks=1,
-            depth=depth if type(depth) is int and depth >= 0 else 10,
+            depth=depth,
             keyword=keyword,
         )["estimated_cost_usd"]
         or round(0.002 * op_mult, 6)
@@ -765,22 +822,44 @@ def _serp_impl(
             return max(float(cost), default_est)
         return default_est
 
+    def _apply_caller_incumbents(envelope: dict[str, Any]) -> None:
+        if not incumbent_sites:
+            return
+        for t in envelope.get("tasks") or []:
+            if not isinstance(t, dict):
+                continue
+            t_data = t.get("data") if isinstance(t.get("data"), dict) else None
+            for res_obj in t.get("result") or []:
+                if isinstance(res_obj, dict) and isinstance(res_obj.get("serp_integrity"), dict):
+                    apply_decoy_assessment(
+                        res_obj["serp_integrity"],
+                        assess_decoy_signals(res_obj, task_data=t_data, incumbent_sites=incumbent_sites),
+                    )
+
     def _run(body: dict[str, Any], opts: dict[str, Any], reason: str) -> dict[str, Any]:
         for transient_try in range(len(TRANSIENT_BACKOFF_S) + 1):
             started = _time.perf_counter()
             envelope = api_request(path, [body], **opts)
             latency = round((_time.perf_counter() - started) * 1000.0, 1)
+            _apply_caller_incumbents(envelope)
             reported = envelope.get("cost")
+            valid_cost = (
+                float(reported)
+                if isinstance(reported, (int, float)) and not isinstance(reported, bool) and math.isfinite(reported)
+                else None
+            )
             tasks = [t for t in (envelope.get("tasks") or []) if isinstance(t, dict)]
             codes = [t.get("status_code") for t in tasks]
-            transient = bool(codes) and all(c in TRANSIENT_TASK_CODES for c in codes)
+            transient = bool(codes) and all(c in TRANSIENT_TASK_CODES for c in codes) and not (
+                valid_cost is not None and valid_cost > 0
+            )
             attempts.append({
                 "attempt": len(attempts) + 1,
                 "reason": reason if transient_try == 0 else f"{reason}:transient_retry_{transient_try}",
                 "task_ids": [str(t["id"]) for t in tasks if t.get("id")],
                 "task_status_codes": codes,
                 "resolve_poisoned_results": body.get("resolve_poisoned_results") is True,
-                "cost_usd": reported if isinstance(reported, (int, float)) and not isinstance(reported, bool) else None,
+                "cost_usd": valid_cost,
                 "latency_ms": latency,
                 "status": _serp_status(envelope),
             })
@@ -893,17 +972,27 @@ def _serp_impl(
                         verification = {"status": "stable", "overlap": ov}
                     else:
                         verification = {"status": "unstable" if not stable else "verify_pull_suspect", "overlap": ov}
-                    final = _serp_first_block(result)
-                    integrity = final.get("serp_integrity") if final else None
-                    if isinstance(integrity, dict):
-                        decoy = assess_decoy_signals(final, task_data=_task_data(result), second_pull_sites=cand_top)
-                        if cand_status in _DECOY_STATUSES and not decoy.get("suspect"):
-                            decoy["suspect"] = True
-                            decoy["fired"] = list(decoy.get("fired") or []) + ["verify_pull_suspect"]
-                            decoy["reasons"] = list(decoy.get("reasons") or []) + [
-                                f"Verification pull (resolve, no swap) was itself {cand_status}"]
-                        apply_decoy_assessment(integrity, decoy)
-                        attempts[-1]["status"] = _serp_status(result)
+                    for t in result.get("tasks") or []:
+                        if not isinstance(t, dict):
+                            continue
+                        t_data = t.get("data") if isinstance(t.get("data"), dict) else None
+                        for res_obj in t.get("result") or []:
+                            if not isinstance(res_obj, dict) or not isinstance(res_obj.get("serp_integrity"), dict):
+                                continue
+                            decoy = assess_decoy_signals(
+                                res_obj,
+                                task_data=t_data,
+                                second_pull_sites=cand_top,
+                                incumbent_sites=incumbent_sites,
+                            )
+                            if cand_status in _DECOY_STATUSES and not decoy.get("suspect"):
+                                decoy["suspect"] = True
+                                decoy["fired"] = list(decoy.get("fired") or []) + ["verify_pull_suspect"]
+                                decoy["reasons"] = list(decoy.get("reasons") or []) + [
+                                    f"Verification pull (resolve, no swap) was itself {cand_status}"
+                                ]
+                            apply_decoy_assessment(res_obj["serp_integrity"], decoy)
+                    attempts[-1]["status"] = _serp_status(result)
 
     labs_items: list[dict[str, Any]] | None = None
     if labs_fallback and (
@@ -945,21 +1034,7 @@ def _serp_impl(
                         if isinstance(r, dict) and isinstance(r.get("items"), list):
                             labs_items.extend(i for i in r["items"] if isinstance(i, dict))
 
-    # Optional caller evidence: known incumbents.
     final_block = _serp_first_block(result)
-    if final_block is not None and incumbent_sites:
-        integrity = final_block.get("serp_integrity")
-        if isinstance(integrity, dict):
-            task_data = None
-            for t in result.get("tasks") or []:
-                if isinstance(t, dict) and isinstance(t.get("data"), dict):
-                    task_data = t["data"]
-                    break
-            apply_decoy_assessment(integrity, assess_decoy_signals(
-                final_block, task_data=task_data, second_pull_sites=verify_top10,
-                incumbent_sites=incumbent_sites))
-            attempts[-1]["status"] = _serp_status(result)
-
     attempt_ids = [tid for a in attempts for tid in a["task_ids"]]
     if retries_used > 0 or labs_items is not None or budget_exhausted:
         _attach_serp_retry_metadata(
@@ -1101,6 +1176,10 @@ def relevant_pages(
 def maps(keyword: str, *, location_coordinate: str, language_code: str = "en",
          depth: int = 100, **request_options: Any) -> dict[str, Any]:
     """One coordinate-pinned Google Maps live task."""
+    if not isinstance(keyword, str) or not keyword.strip():
+        raise RouteError("keyword must be a nonempty string.")
+    if type(depth) is not int or depth < 1 or depth > 700:
+        raise ValueError("depth must be an integer between 1 and 700")
     return api_request(route_for("maps")["path"], [{"keyword": keyword,
                        "location_coordinate": location_coordinate,
                        "language_code": language_code, "depth": depth}], **request_options)

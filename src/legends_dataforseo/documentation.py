@@ -216,6 +216,6 @@ def docs_search(query, *, limit=20, section=None, **options):
         response["hint"] = (
             "Search scans endpoint titles, paths, and summaries in llms.txt. "
             "To inspect request/response parameters (e.g. resolve_poisoned_results), "
-            "run 'lds docs read serp/google/organic/live/advanced'."
+            "run 'legends-dataforseo docs read serp/google/organic/live/advanced'."
         )
     return response

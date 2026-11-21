@@ -336,7 +336,7 @@
       "section": "labs",
       "mode": "live",
       "charged": true,
-      "summary": "Estimated organic traffic for up to 1000 target domains (decoy filler-site signal)",
+      "summary": "Estimated organic traffic for up to 1000 target domains",
       "estimate": {
         "base_usd": 0.01,
         "depth_unit": null,

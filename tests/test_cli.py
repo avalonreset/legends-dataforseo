@@ -126,7 +126,9 @@ class DoctorUnittestSuite(unittest.TestCase):
             self.assertIn(subcommand, cli_doc)
         for flag in (
             "--location-name", "--device", "--os", "--max-poison-retries",
-            "--labs-fallback", "--item-limit",
+            "--labs-fallback", "--item-limit", "--keyword", "--no-resolve-poisoned",
+            "--allow-unverified", "--verify-no-swap", "--resolve-goto-urls",
+            "--no-resolve-goto-urls",
         ):
             self.assertIn(flag, cli_doc)
         for export_name in legends_dataforseo.__all__:

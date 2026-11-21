@@ -820,3 +820,202 @@ def test_web_mode_blocks_encoded_udm_and_always_rejects_udm_plus_resolve(monkeyp
     assert len(sent) == 1
     assert "resolve_poisoned_results" not in sent[0][1][0]
     assert _integrity(allowed)["integrity"] == "unprotected" and _integrity(allowed)["verified"] is False
+
+
+# --- Stage 4 Carbon convergence regression tests (CF-01 .. CF-06) ------------------------------
+
+def test_case_normalized_paths_cannot_bypass_organic_or_batch_guards(monkeypatch):
+    assert client.normalize_path("/V3/SERP/Google/Organic/Live/Advanced.AI") == "/serp/google/organic/live/advanced.ai"
+    assert (
+        client.normalize_path("/SERP/Google/Organic/Task_Get/Advanced/MyTask_ID-9")
+        == "/serp/google/organic/task_get/advanced/MyTask_ID-9"
+    )
+    sent = fake_transport(monkeypatch, [renv(REAL)])
+    with pytest.raises(RouteError):
+        api_request("/SERP/Google/Organic/Live/Advanced", [{"keyword": "a"}, {"keyword": "b"}],
+                    credentials=AUTH, confirm=True)
+    with pytest.raises(RouteError):
+        api_request("/SERP/Google/Organic/Live/Advanced", [{"keyword": "a", "resolve_poisoned_results": False}],
+                    credentials=AUTH, confirm=True)
+    with pytest.raises(CostLimitError):
+        api_request("/SERP/Google/Organic/Live/Advanced", [{"keyword": "a"}],
+                    credentials=AUTH, confirm=True, estimated_cost_usd=0.001, max_cost_usd=0.002)
+    assert sent == []
+    res = api_request("/SERP/Google/Organic/Live/Advanced", [{"keyword": "fractional cto"}],
+                      credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.004)
+    assert sent[0][1][0]["resolve_poisoned_results"] is True
+    assert _integrity(res)["verified"] is True
+
+
+def test_depth_float_and_max_crawl_pages_and_raw_organic_floor_enforced(monkeypatch, tmp_path, capsys):
+    from legends_dataforseo import maps
+
+    for bad_depth in (0, -5, 701, 100.0, True, "10"):
+        with pytest.raises(ValueError):
+            serp("fractional cto", depth=bad_depth, credentials=AUTH, confirm=True)
+        with pytest.raises(ValueError):
+            maps("coffee", location_coordinate="40.7,-74.0,15z", depth=bad_depth, credentials=AUTH, confirm=True)
+
+    assert cli.main(["serp", "fractional cto", "--depth", "0"]) == 2
+    capsys.readouterr()
+    assert cli.main(["competitors", "fractional cto", "--item-limit", "0"]) == 2
+    capsys.readouterr()
+    assert cli.main(["ranked-keywords", "example.com", "--item-limit", "1001"]) == 2
+    capsys.readouterr()
+
+    sent = fake_transport(monkeypatch, [])
+    # Pre-populated resolve_poisoned_results=True without operator still enforces base+resolve floor ($0.004 / $0.022).
+    with pytest.raises(CostLimitError):
+        api_request(ORGANIC_LIVE, [{"keyword": "plumber", "resolve_poisoned_results": True}],
+                    credentials=AUTH, confirm=True, estimated_cost_usd=0.002, max_cost_usd=0.002)
+    with pytest.raises(CostLimitError):
+        api_request(ORGANIC_LIVE, [{"keyword": "plumber", "depth": 100.0, "resolve_poisoned_results": True}],
+                    credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.01)
+    with pytest.raises(CostLimitError):
+        api_request(ORGANIC_TASK_POST, [{"keyword": "site:reddit.com plumber", "max_crawl_pages": 5}],
+                    credentials=AUTH, confirm=True, estimated_cost_usd=0.012, max_cost_usd=0.02)
+    assert sent == []
+
+    # CLI `call` preview injects resolve_poisoned_results and surfaces the true 5x baseline ($0.02, not $0.01),
+    # and `--execute` at that exact reviewed 0.02 budget succeeds without double-charging the resolve page.
+    body_file = tmp_path / "organic_tasks.json"
+    body_file.write_text(json.dumps([{"keyword": "(site:reddit.com) auto repair", "location_code": 2840}]),
+                         encoding="utf-8")
+    assert cli.main(["call", "/serp/google/organic/live/advanced", "--body-file", str(body_file)]) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["body"][0]["resolve_poisoned_results"] is True
+    assert preview["operator_cost_multiplier"] == 5
+    assert preview["operator_baseline_cost_usd"] == 0.02
+
+    monkeypatch.setenv("DATAFORSEO_LOGIN", "fixture-login")
+    monkeypatch.setenv("DATAFORSEO_PASSWORD", "fixture-secret")
+    exec_sent = fake_transport(monkeypatch, [renv(REAL, cost=0.02)])
+    assert cli.main([
+        "call", "/serp/google/organic/live/advanced", "--body-file", str(body_file),
+        "--execute", "--estimated-cost-usd", "0.02", "--max-cost-usd", "0.02",
+    ]) == 0
+    capsys.readouterr()
+    assert len(exec_sent) == 1 and exec_sent[0][1][0]["resolve_poisoned_results"] is True
+
+
+def test_operator_punctuation_and_url_query_param_detection(monkeypatch):
+    from legends_dataforseo import has_serp_cost_multiplier_operator
+
+    for grouped in (
+        "(site:reddit.com) auto repair",
+        "plumber (inurl:forum|inurl:thread)",
+        '"auto repair"site:reddit.com',
+        "+site:reddit.com",
+        "(-site:yelp.com) auto repair",
+    ):
+        assert has_serp_cost_multiplier_operator(grouped) is True, grouped
+
+    for benign in ("on-site: training", "website: example", "https://example.com/path"):
+        assert has_serp_cost_multiplier_operator(benign) is False, benign
+
+    sent = fake_transport(monkeypatch, [])
+    with pytest.raises(CostLimitError):
+        api_request(
+            ORGANIC_LIVE,
+            [{"url": "https://www.google.com/search?q=site%3Areddit.com+plumber"}],
+            credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.01,
+        )
+    assert sent == []
+
+
+def test_incumbent_sites_triggers_repull_and_preserves_verify_pull_suspect(monkeypatch):
+    # Surface-clean decoy (no AIO) caught by incumbent_sites -> re-pulled within max_poison_retries -> verified.
+    sent = fake_transport(monkeypatch, [renv(FILLER), renv(REAL, checks=["from_web"], task_id="t-2")])
+    result = serp("fractional cto", incumbent_sites=REAL[:5], max_poison_retries=2,
+                  credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
+    assert len(sent) == 2
+    assert [a["status"] for a in result["legends_serp"]["attempts"]] == ["suspect_decoy", "clean"]
+    assert _integrity(result)["verified"] is True
+
+    # verify_no_swap + incumbent_sites: if Pull 1 matches incumbents (clean) and Pull 2 is poisoned/suspect,
+    # verify_pull_suspect must NOT be overwritten by incumbent assessment.
+    poison_verify = envelope(
+        block(["en.wikipedia.org"] + REAL[:9], keyword="plumber norristown"),
+        task_id="t-v2", data={"keyword": "plumber norristown", "resolve_poisoned_results": True}, cost=0.004,
+    )
+    clean_first = envelope(
+        block(REAL, keyword="plumber norristown"),
+        task_id="t-v1", data={"keyword": "plumber norristown", "resolve_poisoned_results": True}, cost=0.004,
+    )
+    fake_transport(monkeypatch, [clean_first, poison_verify])
+    with pytest.raises(UnverifiedSerpError) as caught:
+        serp("plumber norristown", incumbent_sites=REAL[:5], verify_no_swap=True, max_poison_retries=0,
+             credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
+    integrity = _integrity(caught.value.response)
+    assert integrity["verified"] is False
+    assert "verify_pull_suspect" in integrity["decoy"]["fired"]
+
+
+def test_zero_organic_html_blocks_and_all_opaque_goto_fail_closed(monkeypatch):
+    # Raw HTML task_get has items=[{"type": "html", ...}] and organic_count == 0 -> must NOT stamp verified=True.
+    html_env = {
+        "status_code": 20000,
+        "cost": 0,
+        "tasks": [{
+            "id": "q-html",
+            "status_code": 20000,
+            "cost": 0,
+            "data": {"keyword": "fractional cto", "resolve_poisoned_results": True},
+            "result": [{"keyword": "fractional cto", "items": [{"type": "html", "html": "<html></html>"}]}],
+        }],
+    }
+    fake_transport(monkeypatch, [html_env])
+    got = api_request("/serp/google/organic/task_get/html/q-html", credentials=AUTH)
+    assert _integrity(got)["organic_count"] == 0
+    assert _integrity(got)["verified"] is False
+    assert "no parsed organic items in result block" in _integrity(got)["unverified_reasons"]
+
+    # All-opaque /goto organic items must still fire AIO / incumbent decoy signals (overlap 0.0) instead of skipping.
+    opaque_items = [
+        aio(*REAL[:4]),
+        *[{"type": "organic", "domain": "google.com", "url": f"https://google.com/goto?url={i}"} for i in range(5)],
+    ]
+    opaque_report = assess_serp_integrity({"keyword": "fractional cto", "items": opaque_items})
+    assert opaque_report["status"] == "suspect_decoy"
+    assert opaque_report["decoy"]["signals"]["aio_organic_disjoint"]["overlap"] == 0.0
+
+
+def test_international_google_goto_unmasked_and_google_subdomains_preserved():
+    from legends_dataforseo import is_goto_wrapped_url
+
+    uk_wrapped = {
+        "type": "organic",
+        "domain": "www.google.co.uk",
+        "url": "https://www.google.co.uk/goto?url=CAES_UK",
+        "breadcrumb": "https://www.bbc.co.uk \u203a news",
+        "title": "BBC News",
+    }
+    assert is_goto_wrapped_url(uk_wrapped["url"]) is True
+    normalize_organic_item(uk_wrapped)
+    assert uk_wrapped["goto_wrapped"] is True
+    assert uk_wrapped["resolved_domain"] == "bbc.co.uk"
+    assert organic_item_site_key(uk_wrapped) == "bbc.co.uk"
+
+    # Real Google product subdomains (developers.google.com, cloud.google.com) are not wrapper hosts
+    # and match AIO reference brand keys ("google").
+    dev_google = {
+        "type": "organic",
+        "domain": "developers.google.com",
+        "url": "https://developers.google.com/search/docs/fundamentals/seo-starter-guide",
+        "breadcrumb": "https://developers.google.com \u203a search \u203a docs",
+        "website_name": "Google for Developers",
+    }
+    normalize_organic_item(dev_google)
+    assert dev_google["goto_wrapped"] is False
+    assert dev_google["resolved_domain"] == "developers.google.com"
+    assert organic_item_site_key(dev_google) == "google.com"
+    res = {
+        "keyword": "technical seo",
+        "items": [
+            aio("developers.google.com", "cto-legends.com", "forbes.com"),
+            dev_google,
+            organic(2, "cto-legends.com"),
+            organic(3, "forbes.com"),
+        ],
+    }
+    assert assess_serp_integrity(res)["decoy"]["signals"]["aio_organic_disjoint"]["overlap"] == 1.0

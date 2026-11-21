@@ -165,8 +165,12 @@ def test_docs_search_empty_results_includes_parameter_hint(monkeypatch, tmp_path
     assert empty["hint"] == (
         "Search scans endpoint titles, paths, and summaries in llms.txt. "
         "To inspect request/response parameters (e.g. resolve_poisoned_results), "
-        "run 'lds docs read serp/google/organic/live/advanced'."
+        "run 'legends-dataforseo docs read serp/google/organic/live/advanced'."
     )
     non_empty = documentation.docs_search("organic", cache_dir=tmp_path)
     assert non_empty["total_matches"] == 1
     assert "hint" not in non_empty
+
+
+def test_bulk_traffic_summary_has_no_stale_decoy_claim():
+    assert "decoy" not in route_for("bulk-traffic")["summary"].lower()

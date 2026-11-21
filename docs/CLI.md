@@ -12,6 +12,7 @@ legends-dataforseo doctor
 legends-dataforseo routes
 legends-dataforseo route maps-task-post
 legends-dataforseo estimate maps --tasks 9 --depth 100
+legends-dataforseo estimate serp --tasks 1 --depth 10 --keyword "site:reddit.com auto repair"
 legends-dataforseo serp "technical SEO" --location-code 2840 --location-name "United States" --device desktop --os windows --max-poison-retries 2 --labs-fallback
 legends-dataforseo demand "technical SEO" "local SEO"
 legends-dataforseo competitors "technical SEO" "local SEO" --item-limit 20
@@ -58,14 +59,15 @@ status; polling and retry decisions belong to the caller.
 | Option | Meaning |
 | --- | --- |
 | `--execute` | Send this request; absent means preview. |
-| `--estimated-cost-usd` | Reviewed estimate for the entire request. Required for paid POST execution. |
+| `--estimated-cost-usd` | Reviewed estimate for the entire request. Required for paid POST execution. Google organic SERP calls floor this against the task depth, mandatory `resolve_poisoned_results` page, and any 5x search-operator surcharge (`site:`, `inurl:`, `intitle:`, `filetype:`, etc.). |
 | `--max-cost-usd` | Local estimate ceiling, not a provider billing cap. Required for paid POST execution. |
 | `--timeout` | Request timeout in seconds; default 300 on SERP paths (resolved pulls can take 66 s+), 90 elsewhere. |
 | `--language-code` | Named-helper language code; default `en`. |
 | `--location-code` | SERP/demand/business/Labs location code; default `2840`. |
 | `--location-name` | Optional canonical location name for `serp` and `business`. |
 | `--location-coordinate` | Required Maps coordinate and zoom value. |
-| `--depth` | SERP/Maps result depth; defaults 10/100 respectively. |
+| `--depth` | SERP/Maps result depth (`1..700`); defaults 10/100 respectively. |
+| `--keyword` | Optional `estimate` keyword for Google organic SERP routes; applies the 5x search-operator surcharge when present. |
 | `--device` | Optional `serp` device (`desktop` or `mobile`). |
 | `--os` | Optional `serp` operating system filter. |
 | `--max-poison-retries` | Bounded SearchGuard poison and `suspect_decoy` re-pulls for `serp` within cumulative `--max-cost-usd`; default 2. |
@@ -74,7 +76,7 @@ status; polling and retry decisions belong to the caller.
 | `--verify-no-swap` | Add one verification pull on `serp` when resolve swapped nothing (`from_web = 0`); doubles cost on clean SERPs. Off by default. If `--max-cost-usd` cannot cover the second pull, verification is `failed` and the SERP fails closed. |
 | `--resolve-goto-urls` / `--no-resolve-goto-urls` | Force or omit `resolve_goto_urls` on `serp`. Default: sent when `--depth` is 10 or less (page-1 pulls, about 2-3 s), omitted for deeper rank tracking (redirect unwrapping can add about 40 s; domains still come from breadcrumb and `website_name`). |
 | `--labs-fallback` | Optional DataForSEO Labs competitor cross-verification for `serp` within cumulative `--max-cost-usd`. |
-| `--item-limit` | Maximum Lab items for `competitors` (default 20), `ranked-keywords` (default 100), and `relevant-pages` (default 100). |
+| `--item-limit` | Maximum Lab items (`1..1000`) for `competitors` (default 20), `ranked-keywords` (default 100), and `relevant-pages` (default 100). |
 | `--output` | Save full JSON to a new file reserved before HTTP; print a summary. |
 | `--summary` | Display IDs, statuses and costs without result bodies. |
 | `--select` | Select a dotted field; repeat for multiple fields. |

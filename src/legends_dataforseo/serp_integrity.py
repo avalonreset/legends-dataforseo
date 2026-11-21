@@ -18,6 +18,24 @@ GOTO_URL_PREFIXES = (
     "http://google.com/url?",
     "http://www.google.com/url?",
 )
+_GOOGLE_WRAPPER_HOST_RE = re.compile(
+    r"^(?:www\.)?google\.(?:com|[a-z]{2}|(?:co|com)\.[a-z]{2})$",
+    re.I,
+)
+_GOTO_URL_RE = re.compile(
+    r"^https?://(?:www\.)?google\.(?:com|[a-z]{2}|(?:co|com)\.[a-z]{2})/(?:goto|url)\?",
+    re.I,
+)
+
+
+def _is_google_wrapper_host(value: Any) -> bool:
+    """True only for bare/www Google search hosts (google.com, www.google.co.uk), not product subdomains."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    raw = value.strip().lower()
+    host = (urlparse(raw).hostname or "") if "://" in raw else raw.split("/", 1)[0]
+    host = host.split(":", 1)[0].rstrip(".")
+    return bool(host and _GOOGLE_WRAPPER_HOST_RE.match(host))
 
 DEGRADED_SERP_CANARY_DOMAINS = frozenset({
     "wikipedia.org",
@@ -52,7 +70,7 @@ INFORMATIONAL_QUERY_TOKENS = frozenset({
 
 _BREADCRUMB_SPLIT_RE = re.compile(r"\s*(?:\u203a|\u00bb|\ufffd|>|/)\s*")
 _SCHEME_PREFIX_RE = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
-_HOST_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$", re.I)
+_HOST_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{2,59})$", re.I)
 
 # Closed allowlist: SERP `website_name` first segment -> registrable domain.
 # Only platforms whose display name maps to exactly one domain belong here.
@@ -124,8 +142,8 @@ def is_goto_wrapped_url(url: Any) -> bool:
     """Return True when a URL is an opaque Google redirect wrapper (/goto or /url)."""
     if not isinstance(url, str) or not url:
         return False
-    lowered = url.strip().lower()
-    return lowered.startswith(GOTO_URL_PREFIXES)
+    stripped = url.strip()
+    return stripped.lower().startswith(GOTO_URL_PREFIXES) or bool(_GOTO_URL_RE.match(stripped))
 
 
 def extract_breadcrumb_target(
@@ -163,7 +181,7 @@ def extract_breadcrumb_target(
 
     if parts:
         candidate_host = parts[0].split(":", 1)[0].lower().rstrip(".")
-        if candidate_host and _HOST_RE.match(candidate_host) and candidate_host not in {"google.com", "www.google.com"}:
+        if candidate_host and _HOST_RE.match(candidate_host) and not _is_google_wrapper_host(candidate_host):
             result["host"] = candidate_host
             result["domain"] = candidate_host.removeprefix("www.")
             result["resolved_domain"] = result["domain"]
@@ -204,10 +222,10 @@ def normalize_organic_item(item: dict[str, Any]) -> dict[str, Any]:
         not isinstance(url, str)
         or not url.strip()
         or is_goto_wrapped_url(url)
-        or site_key(url) == "google.com"
+        or _is_google_wrapper_host(url)
     )
     wrapped = is_goto_wrapped_url(url) or (
-        current_domain in {"google.com", "www.google.com"}
+        _is_google_wrapper_host(current_domain)
         and bool(item.get("breadcrumb"))
         and url_is_missing_or_google
     )
@@ -223,7 +241,7 @@ def normalize_organic_item(item: dict[str, Any]) -> dict[str, Any]:
             item["resolved_domain"] = target["domain"]
             item["breadcrumb_host"] = target["host"]
             item["resolution_basis"] = "breadcrumb"
-        elif current_domain not in {"google.com", "www.google.com", ""}:
+        elif current_domain and not _is_google_wrapper_host(current_domain):
             item["resolved_domain"] = current_domain.removeprefix("www.")
             item["resolution_basis"] = "domain"
         elif target["resolution_basis"] == "website_name":
@@ -240,9 +258,9 @@ def normalize_organic_item(item: dict[str, Any]) -> dict[str, Any]:
     else:
         item.setdefault("goto_wrapped", False)
         if (
-            current_domain in {"google.com", "www.google.com", ""}
+            (not current_domain or _is_google_wrapper_host(current_domain))
             and url_host
-            and site_key(url) != "google.com"
+            and not _is_google_wrapper_host(url_host)
         ):
             if current_domain and "raw_domain" not in item:
                 item["raw_domain"] = item.get("domain")
@@ -306,7 +324,7 @@ def assess_serp_integrity(
         for item in organic_items
         if isinstance(item.get("resolved_domain"), str)
         and item["resolved_domain"]
-        and item["resolved_domain"] not in {"google.com", "www.google.com"}
+        and not _is_google_wrapper_host(item["resolved_domain"])
     )
 
     keyword = ""
@@ -457,22 +475,25 @@ _NAME_SPLIT_RE = re.compile(r"[\u00b7|\u2022\-\u2013\u2014:]")
 def organic_item_site_key(entry: dict[str, Any]) -> str | None:
     """Site key for one organic item, robust to Google /goto wrapping.
 
-    Order: resolved_domain, then a non-Google domain or URL, then the breadcrumb host, then a
-    `website_name` slug such as `reddit` (Google sometimes shows only a site name).
-    Never returns `google.com` for a wrapped result.
+    Order: resolved_domain, then a non-Google-wrapper domain or URL, then the breadcrumb host,
+    then a `website_name` slug such as `reddit` (Google sometimes shows only a site name).
+    Never returns bare `google.<tld>` for a wrapped result, while preserving real Google product
+    subdomains such as `developers.google.com` or `cloud.google.com`.
     """
     if not isinstance(entry, dict):
         return None
     for candidate in (entry.get("resolved_domain"), entry.get("domain"), entry.get("url")):
-        if is_goto_wrapped_url(candidate):
+        if is_goto_wrapped_url(candidate) or _is_google_wrapper_host(candidate):
             continue
         key = site_key(candidate)
-        if key and key not in _GOOGLE_KEYS:
+        if key:
             return key
     target = extract_breadcrumb_target(entry.get("breadcrumb"), entry.get("website_name"))
-    key = site_key(target.get("host") or target.get("resolved_domain"))
-    if key and key not in _GOOGLE_KEYS:
-        return key
+    host_or_dom = target.get("host") or target.get("resolved_domain")
+    if not _is_google_wrapper_host(host_or_dom):
+        key = site_key(host_or_dom)
+        if key:
+            return key
     name = entry.get("website_name")
     if isinstance(name, str) and name.strip():
         head = _NAME_SPLIT_RE.split(name.replace("\u00a0", " "), maxsplit=1)[0]
@@ -585,7 +606,7 @@ def assess_decoy_signals(
     for entry in items:
         if isinstance(entry, dict) and entry.get("type") == "ai_overview":
             _collect_reference_sites(entry, aio_sites)
-    if len(aio_sites) >= int(th["aio_min_reference_sites"]) and top20:
+    if len(aio_sites) >= int(th["aio_min_reference_sites"]) and (top20 or organic):
         ratio = overlap_ratio([_brand(k) for k in aio_sites], [_brand(k) for k in top20])
         signals["aio_organic_disjoint"] = {"fired": ratio is not None and ratio <= th["aio_overlap_max"],
                                            "overlap": ratio, "reference_sites": len(aio_sites),
@@ -595,10 +616,12 @@ def assess_decoy_signals(
         ratio = overlap_ratio(top10, list(second_pull_sites))
         signals["pull_instability"] = {"fired": ratio is not None and ratio <= th["pull_overlap_max"],
                                        "overlap": ratio, "threshold": th["pull_overlap_max"]}
-    if incumbent_sites and top10:
-        ratio = overlap_ratio(top10, [k for k in (site_key(s) for s in incumbent_sites) if k])
-        signals["incumbent_mismatch"] = {"fired": ratio is not None and ratio <= th["incumbent_overlap_max"],
-                                         "overlap": ratio, "threshold": th["incumbent_overlap_max"]}
+    if incumbent_sites and (top10 or organic):
+        inc_keys = [k for k in (site_key(s) for s in incumbent_sites) if k]
+        if inc_keys:
+            ratio = overlap_ratio(top10, inc_keys) if top10 else 0.0
+            signals["incumbent_mismatch"] = {"fired": ratio is not None and ratio <= th["incumbent_overlap_max"],
+                                             "overlap": ratio, "threshold": th["incumbent_overlap_max"]}
 
     suspect, fired = _decide_decoy(signals, th)
     resolve_requested = bool(isinstance(task_data, dict) and task_data.get("resolve_poisoned_results") is True)
@@ -667,6 +690,8 @@ def stamp_verified(
     reasons: list[str] = []
     if unprotected:
         reasons.append(f"unprotected: resolve_poisoned_results was not sent ({ALLOW_POISONED_ENV}=1)")
+    if type(integrity.get("organic_count")) is int and integrity["organic_count"] <= 0:
+        reasons.append("no parsed organic items in result block")
     if status != "clean":
         reasons.append(f"serp_integrity.status is {status}")
     if decoy.get("suspect") or decoy.get("fired"):

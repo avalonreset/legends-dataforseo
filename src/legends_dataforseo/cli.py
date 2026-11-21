@@ -11,9 +11,10 @@ from pathlib import Path
 
 from . import __version__
 from .client import (MAX_RESPONSE_BYTES, ApiError, CredentialError, RouteError,
-                     _is_organic_serp_request_path, _organic_serp_operator_floor,
-                     _safe_local_path, api_request, competitors, credential_status,
-                     estimate_cost, has_serp_cost_multiplier_operator, load_routes,
+                     _enforce_resolve, _is_organic_serp_request_path,
+                     _organic_serp_operator_floor, _safe_local_path,
+                     _task_has_operator, api_request, competitors, credential_status,
+                     estimate_cost, load_routes,
                      ranked_keywords, relevant_pages, route_for, normalize_path,
                      resolve_poisoned_default, serp)
 from .serp_integrity import allow_poisoned
@@ -233,8 +234,12 @@ def _run(args):
             if args.command == "demand":
                 task.update(keywords=args.keywords, location_code=args.location_code)
             elif args.command == "competitors":
+                if not 1 <= args.item_limit <= 1000:
+                    raise RouteError("--item-limit must be between 1 and 1000.")
                 task.update(keywords=args.keywords, location_code=args.location_code, limit=args.item_limit)
             elif args.command in ("ranked-keywords", "relevant-pages"):
+                if not 1 <= args.item_limit <= 1000:
+                    raise RouteError("--item-limit must be between 1 and 1000.")
                 from .client import _normalize_target_domain
                 task.update(target=_normalize_target_domain(args.keywords[0]),
                             location_code=args.location_code, limit=args.item_limit)
@@ -245,6 +250,8 @@ def _run(args):
                 else:
                     task["location_code"] = args.location_code
             else:
+                if not 1 <= args.depth <= 700:
+                    raise RouteError("--depth must be between 1 and 700.")
                 task.update(keyword=args.keywords[0], depth=args.depth)
                 if args.command == "maps":
                     task["location_coordinate"] = args.location_coordinate
@@ -271,16 +278,25 @@ def _run(args):
                         task["resolve_goto_urls"] = True
             payload, method = [task], "POST"
         if not args.execute:
-            result = {"preview": True, "path": path, "method": method, "body": payload,
-                      "estimated_cost_usd": args.estimated_cost_usd, "max_cost_usd": args.max_cost_usd}
             standard_path = path.removesuffix(".ai")
+            preview_body = payload
             if (
                 method == "POST"
                 and _is_organic_serp_request_path(standard_path)
                 and isinstance(payload, list)
-                and any(isinstance(t, dict) and has_serp_cost_multiplier_operator(t.get("keyword")) for t in payload)
+                and payload
+                and all(isinstance(t, dict) for t in payload)
             ):
-                floor_usd, op_mult = _organic_serp_operator_floor(standard_path, payload)
+                preview_body, _ = _enforce_resolve(payload)
+            result = {"preview": True, "path": path, "method": method, "body": preview_body,
+                      "estimated_cost_usd": args.estimated_cost_usd, "max_cost_usd": args.max_cost_usd}
+            if (
+                method == "POST"
+                and _is_organic_serp_request_path(standard_path)
+                and isinstance(preview_body, list)
+                and any(isinstance(t, dict) and _task_has_operator(t) for t in preview_body)
+            ):
+                floor_usd, op_mult = _organic_serp_operator_floor(standard_path, preview_body)
                 result["operator_cost_multiplier"] = op_mult
                 result["operator_baseline_cost_usd"] = floor_usd
                 result["warning"] = (
