@@ -244,5 +244,5 @@ Running a company or technical SEO operation and want verified search intelligen
 
 **Specification & benchmarks on cto-legends.com:**
 - **Module specification & architecture matrix:** [cto-legends.com/modules/legends-dataforseo](https://cto-legends.com/modules/legends-dataforseo)
-- **Related engineering dispatches:** [How to Build AI Agents: Production CLI & MCP Routing](https://cto-legends.com/blog?post=how-to-build-ai-agents-cli-mcp-routing) · [Claude Code Skills: MCP vs CLI Workflow Architecture](https://cto-legends.com/blog?post=claude-code-skills-mcp-vs-cli-workflow) · [AI Agent Governance: Markdown Knowledge Base & Vault Architecture](https://cto-legends.com/blog?post=ai-agent-governance)
+- **Related engineering dispatches:** [How to Choose MCP vs CLI Tools Without Context Bloat](https://cto-legends.com/blog?post=mcp-vs-cli) · [Routing Cursor vs Claude Code by Blast Radius and Cost](https://cto-legends.com/blog?post=cursor-vs-claude-code) · [AI Agent Governance: Markdown Knowledge Base & Vault Architecture](https://cto-legends.com/blog?post=ai-agent-governance)
 - **Ecosystem hub:** [cto-legends.com/home](https://cto-legends.com/home)
