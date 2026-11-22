@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.14 - 2026-11-22
+
+- Sync vendored `cto-legends` router skill pin (`69ddc4f68faa`), enforce LF line endings via `.gitattributes`, and standardize release artifact checksums.
+
 ## 0.1.13 - 2026-11-21
 
 - **Outlined Legends Font `r1` SVG Card Suite & README Refresh (`scripts/render_cards.py`, `assets/cards/r1/*.svg`, `README.md`)**: add deterministic outlined SVG design cards (`slot-1-agent-handoff.svg`, `slot-2-three-pillars.svg`, `slot-3-plain-english-chains.svg`, `slot-4-decoy-defense.svg`, `slot-5-raw-vs-dataforseo.svg`, `slot-collection-star-shrine.svg`, and `slot-7-message-avalon-reset.svg`) with all glyph runs converted to vector `<path>` outlines, the 40-keyword Decoy SERP defense benchmark narrative, 53-route v3 catalog overview, and collapsible `cto-legends` agent setup and CLI/Python reference drawers.
