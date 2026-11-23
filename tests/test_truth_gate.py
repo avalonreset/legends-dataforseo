@@ -13,6 +13,7 @@ from legends_dataforseo import (
     VERIFIED_BASES,
     Credentials,
     UnverifiedSerpError,
+    assess_decoy_signals,
     cli,
     client,
     evaluate_independent_consensus,
@@ -266,3 +267,116 @@ def test_verify_serp_envelope_handles_queued_task_get_and_cli_preview_flags(caps
         "country": "US",
         "local_maps_check": True,
     }
+
+
+# --- depth=10 AIO top-20 truncation (held-out HN09/HI07/HI08 shape) ---------------------------
+
+# Legitimate page-2 authorities an AI Overview can cite; invisible to a depth=10 pull.
+PAGE2 = [
+    "backlinko.com", "searchenginejournal.com", "hubspot.com", "neilpatel.com", "wordstream.com",
+    "semrush-blog.net", "authorityhacker.com", "detailed.com", "growthbar.com", "surfer.com",
+]
+# Strict-consensus independent view of REAL: same #1, same top-3 set, 9/10 shared (Jaccard 0.818).
+REAL_IND = [REAL[0], REAL[2], REAL[1]] + REAL[3:9] + ["extra-site.com"]
+# AIO cites 2 page-1 sites + 3 page-2 sites: overlap vs a depth=10 pull is 0.4 by truncation,
+# not by disjointness (the missing three rank beyond what depth=10 returns).
+AIO_PAGE2_HEAVY = REAL[:2] + PAGE2[:3]
+
+
+def _depth_env(domains, *, depth, checks=None, aio_domains=None):
+    env = _env(domains, checks=checks, aio_domains=aio_domains)
+    env["tasks"][0]["data"]["depth"] = depth
+    return env
+
+
+def _block_of(env):
+    return env["tasks"][0]["result"][0]
+
+
+def test_depth10_aio_refs_beyond_rank10_do_not_refuse_strict_consensus(monkeypatch):
+    env = _depth_env(REAL, depth=10, checks=["from_web"], aio_domains=AIO_PAGE2_HEAVY)
+    decoy = assess_decoy_signals(
+        _block_of(env),
+        task_data={"depth": 10, "resolve_poisoned_results": True},
+        independent_sites=REAL_IND,
+    )
+    cons = decoy["signals"]["independent_consensus"]
+    assert cons["fired"] is False and cons["mode"] == "swapped_strict"
+    assert cons["jaccard"] >= 0.73 and cons["rank1_match"] is True and cons["top3_overlap"] == 1.0
+    aio_sig = decoy["signals"]["aio_organic_disjoint"]
+    assert aio_sig["overlap"] == 0.4 and aio_sig["fired"] is False
+    assert aio_sig["top20_complete"] is False and aio_sig["requested_depth"] == 10
+    assert aio_sig["organic_sites_compared"] == 10
+    assert aio_sig["suppressed_reason"] == "insufficient_depth_for_top20_with_independent_consensus"
+    assert decoy["suspect"] is False and decoy["fired"] == []
+
+    # End to end: the same depth=10 pull verifies on the first attempt, with no paid re-pull.
+    sent = _fake_dfs(monkeypatch, [_depth_env(REAL, depth=10, checks=["from_web"], aio_domains=AIO_PAGE2_HEAVY)])
+    res = serp(
+        "rank tracker tool",
+        max_poison_retries=1,
+        independent_sites=REAL_IND,
+        credentials=AUTH,
+        confirm=True,
+        estimated_cost_usd=0.004,
+        max_cost_usd=0.02,
+    )
+    assert len(sent) == 1
+    integ = _block_of(res)["serp_integrity"]
+    assert integ["status"] == "clean"
+    assert integ["verified"] is True and integ["verified_basis"] == "independent_consensus"
+    assert integ["decoy"]["signals"]["aio_organic_disjoint"]["fired"] is False
+
+
+def test_aio_disjoint_still_refused_when_consensus_fails_or_depth20(monkeypatch):
+    # depth=10, genuine decoy: AIO cites REAL while organics are filler and consensus fails.
+    poisoned = _depth_env(DECOY, depth=10, checks=["from_web"], aio_domains=REAL[:5])
+    decoy = assess_decoy_signals(
+        _block_of(poisoned),
+        task_data={"depth": 10, "resolve_poisoned_results": True},
+        independent_sites=REAL,
+    )
+    aio_sig = decoy["signals"]["aio_organic_disjoint"]
+    assert aio_sig["overlap"] == 0.0 and aio_sig["fired"] is True
+    assert "suppressed_reason" not in aio_sig
+    assert decoy["suspect"] is True
+    assert {"aio_organic_disjoint", "independent_consensus"} <= set(decoy["fired"])
+
+    # depth=10 without any independent consensus: the AIO backstop still fires (offline path).
+    offline = assess_decoy_signals(
+        _block_of(_depth_env(REAL, depth=10, aio_domains=AIO_PAGE2_HEAVY)),
+        task_data={"depth": 10},
+    )
+    assert offline["signals"]["aio_organic_disjoint"]["fired"] is True
+    assert offline["suspect"] is True
+
+    # depth>=20: the top-20 comparison is fully powered, so AIO disjointness fires even
+    # though strict independent consensus passes on the top 10.
+    unranked = ["unranked-a.com", "unranked-b.com", "unranked-c.com"]
+    deep = _depth_env(REAL + PAGE2, depth=20, checks=["from_web"], aio_domains=REAL[:2] + unranked)
+    deep_decoy = assess_decoy_signals(
+        _block_of(deep),
+        task_data={"depth": 20, "resolve_poisoned_results": True},
+        independent_sites=REAL_IND,
+    )
+    deep_aio = deep_decoy["signals"]["aio_organic_disjoint"]
+    assert deep_decoy["signals"]["independent_consensus"]["fired"] is False
+    assert deep_aio["top20_complete"] is True and deep_aio["organic_sites_compared"] == 20
+    assert deep_aio["overlap"] == 0.4 and deep_aio["fired"] is True
+    assert deep_decoy["suspect"] is True and "aio_organic_disjoint" in deep_decoy["fired"]
+
+    # End to end: a poisoned depth=10 SERP with AIO disjointness is still refused loudly.
+    _fake_dfs(monkeypatch, [_depth_env(DECOY, depth=10, checks=["from_web"], aio_domains=REAL[:5])])
+    with pytest.raises(UnverifiedSerpError) as caught:
+        serp(
+            "rank tracker tool",
+            max_poison_retries=0,
+            independent_sites=REAL,
+            credentials=AUTH,
+            confirm=True,
+            estimated_cost_usd=0.004,
+            max_cost_usd=0.01,
+        )
+    integ = _block_of(caught.value.response)["serp_integrity"]
+    assert integ["verified"] is False
+    assert "aio_organic_disjoint" in integ["decoy"]["fired"]

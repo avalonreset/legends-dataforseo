@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
 from datetime import datetime, timezone
@@ -561,10 +562,39 @@ def _decide_decoy(signals: dict[str, Any], thresholds: dict[str, float]) -> tupl
     return len(fired) >= max(1, int(thresholds.get("min_signals", 1))), fired
 
 
+def _positive_depth(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return int(math.ceil(value)) if value > 0 else None
+
+
+def _aio_top20_complete(
+    result_block: dict[str, Any],
+    task_data: dict[str, Any] | None,
+    organic_count: int,
+) -> tuple[bool, int | None]:
+    """(top-20 comparison fully powered?, requested depth) for the AIO overlap check.
+
+    A pull shallower than 20 cannot show AI Overview citations that rank 11-20, so its
+    top-20 overlap is truncated by construction. The requested depth (task echo first,
+    then the result block) decides when known; otherwise the returned organic count is
+    the only depth evidence available.
+    """
+    requested = _positive_depth(task_data.get("depth")) if isinstance(task_data, dict) else None
+    if requested is None and isinstance(result_block, dict):
+        requested = _positive_depth(result_block.get("depth"))
+    if requested is not None:
+        return requested >= 20, requested
+    return organic_count >= 20, None
+
+
 def _decoy_reason(name: str, sig: dict[str, Any]) -> str:
     if name == "aio_organic_disjoint":
         return (f"AI Overview cites {sig.get('reference_sites')} sites but only {sig.get('overlap')} of them "
-                "appear in organic top 20 (AIO stays real while organics are swapped)")
+                f"appear in organic top {sig.get('organic_sites_compared') or 20} "
+                "(AIO stays real while organics are swapped)")
     if name == "pull_instability":
         return f"Top-10 site overlap vs an independent second pull is {sig.get('overlap')}"
     if name == "incumbent_mismatch":
@@ -594,8 +624,9 @@ def assess_decoy_signals(
 ) -> dict[str, Any]:
     """Score decoy-SERP signals for one organic result block (offline; extra evidence optional).
 
-    Signals: AI Overview reference overlap with organic top 20 (needs >= 3 cited sites),
-    second-pull top-10 overlap, caller-known incumbents, independent cross-provider consensus,
+    Signals: AI Overview reference overlap with organic top 20 (needs >= 3 cited sites; on a
+    pull shallower than 20 it is diagnostic only when independent consensus passes, because
+    citations ranking 11-20 are unobservable), second-pull top-10 overlap, caller-known incumbents, independent cross-provider consensus,
     and optional local Google Maps diagnostic overlap. Result age and Labs traffic were
     tested on the 2026-11-20 bench and do not separate decoys, so they are not scored.
     """
@@ -616,9 +647,13 @@ def assess_decoy_signals(
             _collect_reference_sites(entry, aio_sites)
     if len(aio_sites) >= int(th["aio_min_reference_sites"]) and (top20 or organic):
         ratio = overlap_ratio([_brand(k) for k in aio_sites], [_brand(k) for k in top20])
+        top20_complete, requested_depth = _aio_top20_complete(result_block, task_data, len(organic))
         signals["aio_organic_disjoint"] = {"fired": ratio is not None and ratio <= th["aio_overlap_max"],
                                            "overlap": ratio, "reference_sites": len(aio_sites),
-                                           "threshold": th["aio_overlap_max"]}
+                                           "threshold": th["aio_overlap_max"],
+                                           "organic_sites_compared": len(top20),
+                                           "requested_depth": requested_depth,
+                                           "top20_complete": top20_complete}
 
     if second_pull_sites is not None and top10:
         ratio = overlap_ratio(top10, list(second_pull_sites))
@@ -669,6 +704,23 @@ def assess_decoy_signals(
             "maps_count": len(maps_set),
             "overlap": round(hits / max(1, len(top10)), 4),
         }
+
+    aio_sig = signals.get("aio_organic_disjoint")
+    cons_sig = signals.get("independent_consensus")
+    if (
+        isinstance(aio_sig, dict)
+        and aio_sig.get("fired") is True
+        and aio_sig.get("top20_complete") is False
+        and isinstance(cons_sig, dict)
+        and cons_sig.get("fired") is False
+    ):
+        # Shallow pull: AIO citations ranking 11-20 are unobservable, so the truncated
+        # overlap cannot prove disjointness, and independent consensus (fired == False
+        # means passed) already validated the returned top 10 directly. Without a
+        # consensus pass the AIO backstop keeps firing exactly as before.
+        aio_sig["fired"] = False
+        aio_sig["diagnostic"] = True
+        aio_sig["suppressed_reason"] = "insufficient_depth_for_top20_with_independent_consensus"
 
     suspect, fired = _decide_decoy(signals, th)
     resolve_requested = bool(isinstance(task_data, dict) and task_data.get("resolve_poisoned_results") is True)
