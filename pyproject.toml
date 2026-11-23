@@ -24,9 +24,10 @@ classifiers = [
 ]
 
 [project.urls]
+Homepage = "https://cto-legends.com/modules/legends-dataforseo"
+Documentation = "https://cto-legends.com/modules/legends-dataforseo"
 Repository = "https://github.com/avalonreset/legends-dataforseo"
 Issues = "https://github.com/avalonreset/legends-dataforseo/issues"
-Documentation = "https://github.com/avalonreset/legends-dataforseo/tree/main/docs"
 Changelog = "https://github.com/avalonreset/legends-dataforseo/blob/main/CHANGELOG.md"
 Releases = "https://github.com/avalonreset/legends-dataforseo/releases"
 
