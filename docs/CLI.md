@@ -22,7 +22,13 @@ legends-dataforseo maps "coffee" --location-coordinate "40.7128,-74.0060,15z"
 legends-dataforseo business "cid:1234567890123456789" --location-code 2840 --location-name "United States"
 ```
 
-Named request commands preview by default. The registry includes endpoint
+Named request commands preview by default. The `serp` preview includes a
+`truth_gate` block (`consensus_provider`, `country`, `local_maps_check`); on
+`--execute` the default Truth Gate also calls
+`https://api.firecrawl.dev/v2/search` using `FIRECRAWL_API_KEY` from the
+environment (set `FIRECRAWL_DISABLE_USER_ENV=1` to disable the Windows
+user-environment fallback). `doctor` reports the boolean
+`firecrawl_api_key_configured` without printing the key. The registry includes endpoint
 descriptions beyond the seven named helpers (`serp`, `maps`, `demand`,
 `business`, `competitors`, `ranked-keywords`, and `relevant-pages`); discovery
 is not a promise that every route has its own command or has been live-tested.
@@ -74,8 +80,8 @@ status; polling and retry decisions belong to the caller.
 | `--no-resolve-poisoned` | UNPROTECTED. Send `resolve_poisoned_results: false` on `serp`. Refused unless `LEGENDS_DFS_ALLOW_POISONED=1`; results are stamped `integrity: unprotected`, `verified: false`. Resolve is mandatory since 0.1.12 (one extra SERP page per task). |
 | `--allow-unverified` | Print an unverified `serp` result instead of failing. By default an unverified SERP exits 2 with `UnverifiedSerpError` and the stamped response; use only to inspect it. |
 | `--verify-no-swap` | Add one verification pull on `serp` when resolve swapped nothing (`from_web = 0`); doubles cost on clean SERPs. Off by default. If `--max-cost-usd` cannot cover the second pull, verification is `failed` and the SERP fails closed. |
-| `--consensus-provider` | Independent SERP Truth Gate provider for `serp` (`firecrawl` default, or `none` which fails closed unless `--allow-unverified`). |
-| `--country` | Country code passed to the independent consensus search provider (default `US`). |
+| `--consensus-provider` | Independent SERP Truth Gate provider for `serp` (`firecrawl` default, or `none` which fails closed unless `--allow-unverified`). The default calls `https://api.firecrawl.dev/v2/search` with `FIRECRAWL_API_KEY` from the environment (process env, or Windows user env unless `FIRECRAWL_DISABLE_USER_ENV=1`; 2 credits per check). |
+| `--country` | 2-letter ASCII ISO country code (`^[A-Za-z]{2}$`, validated before any paid request) passed to the independent consensus search provider (default `US`). |
 | `--local-maps-check` | Optional DataForSEO Google Maps diagnostic cross-check for local-intent `serp` pulls (+$0.002). |
 | `--resolve-goto-urls` / `--no-resolve-goto-urls` | Force or omit `resolve_goto_urls` on `serp`. Default: sent when `--depth` is 10 or less (page-1 pulls, about 2-3 s), omitted for deeper rank tracking (redirect unwrapping can add about 40 s; domains still come from breadcrumb and `website_name`). |
 | `--labs-fallback` | Optional DataForSEO Labs competitor cross-verification for `serp` within cumulative `--max-cost-usd`. |

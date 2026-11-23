@@ -7,6 +7,7 @@ an independent search view (Firecrawl /v2/search or caller-supplied provider/sit
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import time
@@ -18,9 +19,13 @@ from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Requ
 from .serp_integrity import (
     _brand,
     _collect_reference_sites,
+    _is_google_wrapper_host,
     apply_decoy_assessment,
     assess_decoy_signals,
+    assess_serp_integrity,
+    is_goto_wrapped_url,
     normalize_organic_item,
+    normalize_serp_envelope,
     organic_site_keys,
     overlap_ratio,
     site_key,
@@ -86,20 +91,38 @@ def _windows_user_env(name: str) -> str | None:
         return None
 
 
+def _clean_firecrawl_api_key(value: Any) -> str | None:
+    """Strip and validate a Firecrawl key (non-empty, no ASCII control bytes); never echoes it."""
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    if not cleaned or any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
+        return None
+    return cleaned
+
+
+def _is_valid_independent_url(url: Any) -> bool:
+    """True only for real http/https URLs that are not Google /goto or /url wrappers."""
+    if not isinstance(url, str) or not url.strip():
+        return False
+    candidate = url.strip()
+    if is_goto_wrapped_url(candidate) or _is_google_wrapper_host(candidate):
+        return False
+    parsed = urlparse(candidate)
+    return parsed.scheme in ("http", "https") and bool(parsed.hostname)
+
+
 def load_firecrawl_api_key() -> tuple[str, str] | None:
     """Load FIRECRAWL_API_KEY strictly from process env or Windows user env (never echoes value)."""
-    val = os.environ.get("FIRECRAWL_API_KEY")
-    if isinstance(val, str) and val.strip():
-        cleaned = val.strip()
-        if not any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
-            return cleaned, "process-env"
+    cleaned = _clean_firecrawl_api_key(os.environ.get("FIRECRAWL_API_KEY"))
+    if cleaned is not None:
+        return cleaned, "process-env"
+    if isinstance(os.environ.get("FIRECRAWL_API_KEY"), str) and os.environ["FIRECRAWL_API_KEY"].strip():
         return None
     if not os.environ.get("FIRECRAWL_DISABLE_USER_ENV"):
-        val = _windows_user_env("FIRECRAWL_API_KEY")
-        if isinstance(val, str) and val.strip():
-            cleaned = val.strip()
-            if not any(ord(ch) < 32 or ord(ch) == 127 for ch in cleaned):
-                return cleaned, "user-env"
+        cleaned = _clean_firecrawl_api_key(_windows_user_env("FIRECRAWL_API_KEY"))
+        if cleaned is not None:
+            return cleaned, "user-env"
     return None
 
 
@@ -244,7 +267,28 @@ def firecrawl_search_view(
             }
         key_val, key_source = loaded
     else:
-        key_val, key_source = api_key, "explicit"
+        cleaned_key = _clean_firecrawl_api_key(api_key)
+        if cleaned_key is None:
+            return {
+                "provider": "firecrawl_search",
+                "ok": False,
+                "sites": [],
+                "items": [],
+                "latency_ms": 0.0,
+                "credits_estimated": 0,
+                "error": "FIRECRAWL_API_KEY invalid",
+            }
+        key_val, key_source = cleaned_key, "explicit"
+    if not isinstance(keyword, str) or not keyword.strip():
+        return {
+            "provider": "firecrawl_search",
+            "ok": False,
+            "sites": [],
+            "items": [],
+            "latency_ms": 0.0,
+            "credits_estimated": 0,
+            "error": "keyword must be a nonempty string",
+        }
 
     payload: dict[str, Any] = {
         "query": keyword.strip(),
@@ -281,6 +325,10 @@ def firecrawl_search_view(
             }
         decoded = json.loads(raw.decode("utf-8"))
     except HTTPError as exc:
+        try:
+            exc.close()
+        except Exception:
+            pass
         return {
             "provider": "firecrawl_search",
             "ok": False,
@@ -290,7 +338,7 @@ def firecrawl_search_view(
             "credits_estimated": 0,
             "error": f"Firecrawl HTTP {exc.code}",
         }
-    except (URLError, TimeoutError, OSError, ValueError) as exc:
+    except (URLError, TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
         return {
             "provider": "firecrawl_search",
             "ok": False,
@@ -302,23 +350,49 @@ def firecrawl_search_view(
         }
 
     latency_ms = round((time.perf_counter() - started) * 1000.0, 1)
-    data = decoded.get("data") if isinstance(decoded, dict) else None
+    if not isinstance(decoded, dict):
+        return {
+            "provider": "firecrawl_search",
+            "credential_source": key_source,
+            "ok": False,
+            "sites": [],
+            "items": [],
+            "latency_ms": latency_ms,
+            "credits_estimated": FIRECRAWL_SEARCH_CREDITS,
+            "error": "Firecrawl search returned a non-object payload",
+        }
+    if decoded.get("success") is False:
+        provider_error = decoded.get("error")
+        detail = ""
+        if isinstance(provider_error, str) and provider_error.strip() and key_val not in provider_error:
+            detail = ": " + "".join(ch for ch in provider_error.strip()[:200] if ord(ch) >= 32 and ord(ch) != 127)
+        return {
+            "provider": "firecrawl_search",
+            "credential_source": key_source,
+            "ok": False,
+            "sites": [],
+            "items": [],
+            "latency_ms": latency_ms,
+            "credits_estimated": FIRECRAWL_SEARCH_CREDITS,
+            "error": f"Firecrawl search reported success=false{detail}",
+        }
+    data = decoded.get("data")
     web = data.get("web") if isinstance(data, dict) else (data if isinstance(data, list) else [])
     if not isinstance(web, list):
         web = []
 
     items: list[dict[str, Any]] = []
     sites: list[str] = []
-    for idx, entry in enumerate(web, start=1):
+    for entry in web:
         if not isinstance(entry, dict):
             continue
         url = entry.get("url")
-        if not isinstance(url, str) or not url.strip():
+        if not _is_valid_independent_url(url):
             continue
         dom = site_key(url)
         host = (urlparse(url.strip()).hostname or "").lower().rstrip(".")
         items.append({
-            "rank": idx,
+            "rank": len(items) + 1,
             "url": url.strip(),
             "domain": host or dom,
             "resolved_domain": dom,
@@ -327,6 +401,18 @@ def firecrawl_search_view(
         })
         if dom and dom not in sites:
             sites.append(dom)
+
+    if not sites:
+        return {
+            "provider": "firecrawl_search",
+            "credential_source": key_source,
+            "ok": False,
+            "sites": [],
+            "items": [],
+            "latency_ms": latency_ms,
+            "credits_estimated": FIRECRAWL_SEARCH_CREDITS,
+            "error": "Firecrawl search returned no usable sites",
+        }
 
     return {
         "provider": "firecrawl_search",
@@ -470,7 +556,10 @@ def try_aio_corroborated_repair(
     th = dict(TRUTH_GATE_THRESHOLDS)
     if thresholds:
         th.update(thresholds)
-    ind_items = [it for it in (independent_view.get("items") or []) if isinstance(it, dict) and it.get("url")]
+    ind_items = [
+        it for it in (independent_view.get("items") or [])
+        if isinstance(it, dict) and _is_valid_independent_url(it.get("url"))
+    ]
     if len(ind_items) < int(th["aio_repair_min_items"]):
         return {"repaired": False, "reason": "insufficient_independent_items"}
 
@@ -503,7 +592,10 @@ def try_aio_corroborated_repair(
     original_dfs_top10 = organic_site_keys(result_block, limit=10)
     non_organic = [it for it in items if not (isinstance(it, dict) and it.get("type") == "organic")]
     repaired_organics: list[dict[str, Any]] = []
-    for idx, src in enumerate(ind_items[:10], start=1):
+    for src in ind_items[:10]:
+        if not _is_valid_independent_url(src.get("url")):
+            continue
+        idx = len(repaired_organics) + 1
         url = str(src["url"]).strip()
         host = (urlparse(url).hostname or "").lower().rstrip(".")
         dom = src.get("resolved_domain") or site_key(url)
@@ -555,6 +647,7 @@ def verify_serp_envelope(
     tasks = envelope.get("tasks")
     if not isinstance(tasks, list):
         return envelope
+    normalize_serp_envelope(envelope, endpoint="/serp/google/organic/live/advanced")
 
     for task in tasks:
         if not isinstance(task, dict):
@@ -564,8 +657,10 @@ def verify_serp_envelope(
         task_kw = keyword or (t_data.get("keyword") if isinstance(t_data.get("keyword"), str) else None)
         task_loc = location_name or (t_data.get("location_name") if isinstance(t_data.get("location_name"), str) else None)
         for res_obj in task.get("result") or []:
-            if not isinstance(res_obj, dict) or not isinstance(res_obj.get("serp_integrity"), dict):
+            if not isinstance(res_obj, dict):
                 continue
+            if not isinstance(res_obj.get("serp_integrity"), dict):
+                res_obj["serp_integrity"] = assess_serp_integrity(res_obj, task_data=t_data)
             integrity = res_obj["serp_integrity"]
             kw = task_kw or (res_obj.get("keyword") if isinstance(res_obj.get("keyword"), str) else "")
             if not sent_resolve:
@@ -642,9 +737,9 @@ def verify_serp_envelope(
                         maps_sites=maps_sites,
                         consensus_result=new_consensus,
                     )
-                    integrity["status"] = "clean"
-                    integrity["reasons"] = []
-                    integrity["organic_count"] = len(new_top10)
+                    fresh = assess_serp_integrity(res_obj, task_data=t_data)
+                    integrity.clear()
+                    integrity.update(fresh)
                     integrity["repaired_from_dfs_top10"] = repair["original_dfs_top10"]
                     integrity["repair"] = repair
                     apply_decoy_assessment(integrity, new_decoy)

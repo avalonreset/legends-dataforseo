@@ -582,9 +582,20 @@ def _aio_top20_complete(
     then the result block) decides when known; otherwise the returned organic count is
     the only depth evidence available.
     """
-    requested = _positive_depth(task_data.get("depth")) if isinstance(task_data, dict) else None
-    if requested is None and isinstance(result_block, dict):
-        requested = _positive_depth(result_block.get("depth"))
+    candidates: list[int] = []
+    for source in (task_data, result_block):
+        if not isinstance(source, dict):
+            continue
+        depth = _positive_depth(source.get("depth"))
+        if depth is not None:
+            candidates.append(depth)
+        pages = _positive_depth(source.get("max_crawl_pages"))
+        if pages is not None:
+            candidates.append(pages * 10)
+    requested = max(candidates) if candidates else None
+    top20_len = len(organic_site_keys(result_block, limit=20)) if isinstance(result_block, dict) else organic_count
+    if top20_len >= 20:
+        return True, requested
     if requested is not None:
         return requested >= 20, requested
     return organic_count >= 20, None
@@ -804,7 +815,8 @@ def stamp_verified(
     reasons: list[str] = []
     if unprotected:
         reasons.append(f"unprotected: resolve_poisoned_results was not sent ({ALLOW_POISONED_ENV}=1)")
-    if type(integrity.get("organic_count")) is int and integrity["organic_count"] <= 0:
+    organic_count = integrity.get("organic_count")
+    if type(organic_count) is not int or organic_count <= 0:
         reasons.append("no parsed organic items in result block")
     if status != "clean":
         reasons.append(f"serp_integrity.status is {status}")

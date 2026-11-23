@@ -380,3 +380,189 @@ def test_aio_disjoint_still_refused_when_consensus_fails_or_depth20(monkeypatch)
     integ = _block_of(caught.value.response)["serp_integrity"]
     assert integ["verified"] is False
     assert "aio_organic_disjoint" in integ["decoy"]["fired"]
+
+
+# --- Carbon gate hardening: Firecrawl payloads, validation, repair refresh ------------------
+
+def _fc_payload(monkeypatch, payload):
+    monkeypatch.setattr(
+        truth_gate, "_open_firecrawl",
+        lambda req, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+
+
+def test_firecrawl_empty_and_error_200_payloads_fail_closed(monkeypatch):
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test-key")
+    for payload in (
+        [],
+        {"success": False, "error": "provider exploded"},
+        {"success": True, "data": {"web": []}},
+        {"success": True, "data": {"web": [{"url": "https://www.google.com/goto?u=x"}]}},
+        {"success": True, "data": {"web": [{"url": "ftp://example.com/a"}]}},
+    ):
+        _fc_payload(monkeypatch, payload)
+        view = firecrawl_search_view("rank tracker tool")
+        assert view["ok"] is False and view["sites"] == [] and view["error"], payload
+        assert "fc-test-key" not in json.dumps(view)
+
+
+def test_empty_firecrawl_view_does_not_burn_paid_retries(monkeypatch):
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test-key")
+    _fc_payload(monkeypatch, {"success": True, "data": {"web": []}})
+    sent = _fake_dfs(monkeypatch, [_env(REAL, checks=["from_web"])])
+    with pytest.raises(UnverifiedSerpError):
+        serp("rank tracker tool", max_poison_retries=2, credentials=AUTH, confirm=True,
+             estimated_cost_usd=0.004, max_cost_usd=0.05)
+    assert len(sent) == 1
+
+
+def test_firecrawl_http_exception_bad_key_and_empty_keyword(monkeypatch):
+    import http.client
+
+    calls = []
+
+    def boom(req, timeout):
+        calls.append(req)
+        raise http.client.BadStatusLine("garbage")
+
+    monkeypatch.setattr(truth_gate, "_open_firecrawl", boom)
+    view = firecrawl_search_view("rank tracker tool", api_key="fc-good-key")
+    assert view["ok"] is False and "BadStatusLine" in view["error"] and len(calls) == 1
+
+    for bad_key in ("", "   ", "bad\x01key", "bad\x7fkey", 123):
+        view = firecrawl_search_view("rank tracker tool", api_key=bad_key)
+        assert view["ok"] is False and len(calls) == 1, bad_key
+        assert "bad" not in json.dumps(view)
+    for bad_kw in ("", "   ", None, 123):
+        view = firecrawl_search_view(bad_kw, api_key="fc-good-key")
+        assert view["ok"] is False and len(calls) == 1, bad_kw
+
+    fp = io.BytesIO(b"nope")
+
+    def http_err(req, timeout):
+        raise HTTPError(req.full_url, 500, "Server Error", {}, fp)
+
+    monkeypatch.setattr(truth_gate, "_open_firecrawl", http_err)
+    assert firecrawl_search_view("rank tracker tool", api_key="fc-good-key")["ok"] is False
+    assert fp.closed is True
+
+
+def test_serp_validates_truth_gate_inputs_before_any_http(monkeypatch):
+    sent = _fake_dfs(monkeypatch, [_env(REAL)])
+    base = dict(credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
+    bad_calls = [
+        dict(country="USA"), dict(country="U1"), dict(country=""), dict(country=123),
+        dict(independent_sites="semrush.com"), dict(independent_sites=[]),
+        dict(independent_sites=[123]), dict(independent_sites=["  "]),
+        dict(independent_items="x"), dict(independent_items=[]),
+        dict(independent_items=[123]), dict(independent_items=[{}]),
+        dict(independent_items=[{"url": "ftp://example.com/a"}]),
+        dict(consensus_thresholds="x"), dict(consensus_thresholds={"unknown_key": 1}),
+        dict(consensus_thresholds={"unswapped_jaccard_min": 2}),
+        dict(consensus_thresholds={"unswapped_require_rank1": "yes"}),
+        dict(consensus_thresholds={"aio_repair_min_items": 0}),
+    ]
+    for extra in bad_calls:
+        with pytest.raises(ValueError):
+            serp("rank tracker tool", **base, **extra)
+    assert sent == []
+
+
+def test_cli_bad_country_rejected_before_execution(capsys):
+    assert cli.main(["serp", "rank tracker tool", "--country", "USA"]) == 2
+    assert "country" in capsys.readouterr().err
+    assert cli.main(["serp", "rank tracker tool", "--country", "U1", "--execute",
+                     "--estimated-cost-usd", "0.01", "--max-cost-usd", "0.02"]) == 2
+    assert "country" in capsys.readouterr().err
+
+
+def test_verify_serp_envelope_normalizes_unstamped_blocks():
+    raw = _env(REAL, checks=["from_web"])
+    assert "serp_integrity" not in raw["tasks"][0]["result"][0]
+    verify_serp_envelope(raw, independent_sites=REAL)
+    integ = raw["tasks"][0]["result"][0]["serp_integrity"]
+    assert integ["verified"] is True and integ["verified_basis"] == "independent_consensus"
+
+    empty = _env([])
+    verify_serp_envelope(empty, independent_sites=REAL)
+    empty_integ = empty["tasks"][0]["result"][0]["serp_integrity"]
+    assert empty_integ["verified"] is False and empty_integ["organic_count"] == 0
+
+
+def test_stamp_verified_organic_count_must_be_strict_positive_int():
+    from legends_dataforseo import stamp_verified
+
+    def base(count_marker):
+        integ = {"status": "clean", "decoy": {"suspect": False, "fired": [], "signals": {}}}
+        if count_marker != "missing":
+            integ["organic_count"] = count_marker
+        return integ
+
+    good = {"status": "independent_consensus", "consensus_passed": True}
+    for bad in (False, True, 0, -1, None, "10", 10.0, "missing"):
+        assert stamp_verified(base(bad), verification=good)["verified"] is False, bad
+    assert stamp_verified(base(10), verification=good)["verified"] is True
+
+
+def test_independent_url_wrapper_filtering(monkeypatch):
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-test-key")
+    _fc_payload(monkeypatch, {"success": True, "data": {"web": [
+        {"url": "https://www.google.com/goto?u=https://example.com"},
+        {"url": "https://www.google.com/url?q=https://example.com"},
+        {"url": "https://www.google.co.uk/goto?u=https://example.com"},
+        {"url": "javascript:alert(1)"},
+        {"url": "ftp://example.com/a"},
+        {"url": "not a url"},
+        {"url": "https://www.semrush.com/guide", "title": "Semrush"},
+    ]}})
+    view = firecrawl_search_view("rank tracker tool")
+    assert view["ok"] is True and view["sites"] == ["semrush.com"] and len(view["items"]) == 1
+
+    from legends_dataforseo.truth_gate import try_aio_corroborated_repair
+
+    block = _block_of(_env(DECOY, aio_domains=REAL[:5]))
+    wrappers = [{"url": f"https://www.google.com/goto?u={i}"} for i in range(4)]
+    valid4 = [{"url": f"https://{d}/g", "resolved_domain": d} for d in REAL[:4]]
+    view4 = {"provider": "test", "sites": REAL[:4], "items": wrappers + valid4}
+    assert try_aio_corroborated_repair(block, view4)["repaired"] is False
+
+
+def test_post_repair_integrity_is_reassessed(monkeypatch):
+    canary_decoy = ["en.wikipedia.org"] + DECOY[1:]
+    poisoned = _env(canary_decoy, aio_domains=REAL[:5], checks=["from_web"])
+    _fake_dfs(monkeypatch, [poisoned, poisoned])
+    ind_items = [
+        {"rank": idx, "url": f"https://{dom}/guide", "domain": dom, "resolved_domain": dom}
+        for idx, dom in enumerate(REAL[:8], start=1)
+    ]
+    res = serp("rank tracker tool", max_poison_retries=1, independent_items=ind_items,
+               credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
+    integ = _block_of(res)["serp_integrity"]
+    assert integ["verified"] is True
+    assert integ["canary_hits"] == [] and integ["goto_wrapped_count"] == 0
+    assert integ["resolved_domain_count"] == 8 and integ["organic_count"] == 8
+    assert integ["status"] == "clean" and integ["reasons"] == []
+
+
+def test_aio_top20_complete_uses_max_crawl_pages_and_returned_top20():
+    from legends_dataforseo.serp_integrity import _aio_top20_complete
+
+    block10 = _block_of(_env(REAL))
+    assert _aio_top20_complete(block10, {"max_crawl_pages": 2}, 10) == (True, 20)
+    assert _aio_top20_complete(block10, {"max_crawl_pages": 1}, 10) == (False, 10)
+    assert _aio_top20_complete(block10, {"depth": 10, "max_crawl_pages": 2}, 10) == (True, 20)
+    block20 = _block_of(_env(REAL + PAGE2))
+    assert _aio_top20_complete(block20, {"depth": 10}, 20) == (True, 10)
+    assert _aio_top20_complete(block10, {"depth": 10}, 10) == (False, 10)
+
+
+def test_doctor_reports_firecrawl_configured_without_key(monkeypatch, capsys):
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-doctor-secret")
+    assert cli.main(["doctor"]) == 0
+    out = capsys.readouterr().out
+    assert json.loads(out)["firecrawl_api_key_configured"] is True
+    assert "fc-doctor-secret" not in out
+    monkeypatch.delenv("FIRECRAWL_API_KEY")
+    monkeypatch.setenv("FIRECRAWL_DISABLE_USER_ENV", "1")
+    assert cli.main(["doctor"]) == 0
+    assert json.loads(capsys.readouterr().out)["firecrawl_api_key_configured"] is False

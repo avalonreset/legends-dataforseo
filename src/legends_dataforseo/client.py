@@ -737,12 +737,14 @@ def _serp_impl(
         allow_poisoned,
         apply_decoy_assessment,
         assess_decoy_signals,
+        assess_serp_integrity,
         organic_site_keys,
         overlap_ratio,
         site_key,
         stamp_verified,
     )
     from .truth_gate import (
+        TRUTH_GATE_THRESHOLDS,
         evaluate_independent_consensus,
         fetch_independent_view,
         try_aio_corroborated_repair,
@@ -764,6 +766,41 @@ def _serp_impl(
         raise ValueError("resolve_goto_urls must be a boolean or None")
     if consensus_provider not in ("firecrawl", "none", None) and not callable(consensus_provider):
         raise ValueError("consensus_provider must be 'firecrawl', 'none', None, or a callable")
+    if not isinstance(country, str) or not re.fullmatch(r"[A-Za-z]{2}", country):
+        raise ValueError("country must be a 2-letter ASCII ISO code (e.g. 'US')")
+    if independent_sites is not None:
+        if isinstance(independent_sites, (str, bytes)) or not isinstance(independent_sites, (list, tuple)) or not independent_sites:
+            raise ValueError("independent_sites must be a nonempty list of site strings")
+        if any(not isinstance(s, str) or not s.strip() for s in independent_sites):
+            raise ValueError("independent_sites must be a nonempty list of site strings")
+    if independent_items is not None:
+        if isinstance(independent_items, (str, bytes)) or not isinstance(independent_items, (list, tuple)) or not independent_items:
+            raise ValueError("independent_items must be a nonempty list of item mappings")
+        for _item in independent_items:
+            if not isinstance(_item, dict):
+                raise ValueError("independent_items must be a nonempty list of item mappings")
+            _url = _item.get("url")
+            _dom = _item.get("resolved_domain") or _item.get("domain")
+            if _url is not None:
+                if not isinstance(_url, str) or not _url.strip() or urlsplit(_url.strip()).scheme not in ("http", "https") or not urlsplit(_url.strip()).hostname:
+                    raise ValueError("independent_items entries must carry a valid http(s) url or domain")
+            elif not isinstance(_dom, str) or not _dom.strip():
+                raise ValueError("independent_items entries must carry a valid http(s) url or domain")
+    if consensus_thresholds is not None:
+        if not isinstance(consensus_thresholds, dict):
+            raise ValueError("consensus_thresholds must be a mapping or None")
+        _unknown = sorted(set(consensus_thresholds) - set(TRUTH_GATE_THRESHOLDS))
+        if _unknown:
+            raise ValueError(f"unknown consensus_thresholds keys: {', '.join(_unknown)}")
+        for _k, _v in consensus_thresholds.items():
+            if _k.endswith("require_rank1"):
+                if type(_v) is not bool:
+                    raise ValueError(f"consensus_thresholds[{_k}] must be a boolean")
+            elif _k in ("aio_repair_min_sites", "aio_repair_min_items"):
+                if type(_v) is not int or _v < 1:
+                    raise ValueError(f"consensus_thresholds[{_k}] must be a positive integer")
+            elif isinstance(_v, bool) or not isinstance(_v, (int, float)) or not math.isfinite(float(_v)) or not 0.0 <= float(_v) <= 1.0:
+                raise ValueError(f"consensus_thresholds[{_k}] must be a number between 0 and 1")
     if resolve_poisoned_results is None or resolve_poisoned_results is True:
         resolve = True
     elif resolve_poisoned_results is False:
@@ -1188,10 +1225,14 @@ def _serp_impl(
                 maps_sites=effective_maps_sites,
                 consensus_result=new_cons,
             )
-            integ = first_blk["serp_integrity"]
-            integ["status"] = "clean"
-            integ["reasons"] = []
-            integ["organic_count"] = len(new_top10)
+            fresh = assess_serp_integrity(first_blk, task_data=t_data)
+            integ = first_blk.get("serp_integrity")
+            if isinstance(integ, dict):
+                integ.clear()
+                integ.update(fresh)
+            else:
+                integ = fresh
+                first_blk["serp_integrity"] = integ
             integ["repaired_from_dfs_top10"] = repair["original_dfs_top10"]
             integ["repair"] = repair
             apply_decoy_assessment(integ, new_decoy)

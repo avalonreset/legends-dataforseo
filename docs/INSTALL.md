@@ -78,6 +78,8 @@ source files, issue reports, or chat.
 | `DATAFORSEO_LOGIN` | API login; preferred name |
 | `DATAFORSEO_USERNAME` | Login alias for existing integrations |
 | `DATAFORSEO_PASSWORD` | API password |
+| `FIRECRAWL_API_KEY` | Independent SERP Truth Gate consensus key (see below) |
+| `FIRECRAWL_DISABLE_USER_ENV` | Set to `1` to ignore the Windows user-environment `FIRECRAWL_API_KEY` fallback |
 
 The loader uses a complete process environment pair first, then a complete
 Windows user environment pair. It never combines credentials across scopes or
@@ -90,9 +92,24 @@ legends-dataforseo doctor
 legends-dataforseo doctor --live
 ```
 
-The default doctor is offline and reports credential presence without values.
-`--live` sends a no-charge authentication check. For charged requests, continue
-with [first use](FIRST-USE.md).
+The default doctor is offline and reports credential presence without values
+(including the boolean `firecrawl_api_key_configured`; the key itself is never
+printed). `--live` sends a no-charge authentication check. For charged requests,
+continue with [first use](FIRST-USE.md).
+
+### Independent SERP Truth Gate (`FIRECRAWL_API_KEY`)
+
+Every protected `serp()` pull is verified against an independent search view.
+By default (`consensus_provider="firecrawl"` / `--consensus-provider firecrawl`)
+that view comes from Firecrawl `POST https://api.firecrawl.dev/v2/search`
+(2 credits per check, HTTPS-only, no redirects, keyword/location/country only).
+Set `FIRECRAWL_API_KEY` in the process environment (or the Windows user
+environment, unless `FIRECRAWL_DISABLE_USER_ENV=1`) so protected SERPs can reach
+`verified: true`; without it the gate fails closed (`independent_unavailable`)
+unless you pass `independent_sites` / `independent_items` / a custom
+`consensus_provider` callable, or explicitly inspect an unverified result with
+`allow_unverified=True` / `--allow-unverified`. All other provider traffic
+targets `https://api.dataforseo.com/v3`.
 
 ## Troubleshooting
 

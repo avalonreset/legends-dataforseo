@@ -201,8 +201,8 @@ SERP is re-pulled with resolve within `max_poison_retries` and the cumulative
 when `verify_no_swap=True` (off by default since it doubles cost on clean
 SERPs; one more resolve-priced page, cap-checked, and a cap too small for it
 records `verification = {"status": "failed", "reason":
-"max_cost_usd_insufficient_for_second_pull"}` and fails closed): a
-swap on that pull is adopted (`resolved_on_verify`), agreement above
+"max_cost_usd_insufficient_for_second_pull"}` and fails closed): the
+second pull is telemetry only and is never adopted as the result; agreement above
 `pull_overlap_max` is `stable`, disagreement is `unstable` and fires
 `pull_instability`. A SERP still suspect at the end gets
 `status = "unverified_decoy"` (with `detected_status = "suspect_decoy"`) or
@@ -225,6 +225,22 @@ retrievals are stamped `verified = false` until verified with
 `FIRECRAWL_API_KEY` from the environment) or caller-supplied `independent_sites` /
 `independent_items`, re-pulling on disagreement and optionally repairing from an
 AIO-corroborated independent view before failing closed with `UnverifiedSerpError`.
+
+**Depth < 20 AIO diagnostic.** The `aio_organic_disjoint` signal compares AI
+Overview citations against the organic top 20. On a pull whose effective depth
+(`depth`, or `max_crawl_pages * 10`; a returned top 20 always counts as complete)
+is below 20, citations ranking 11-20 are unobservable, so when independent
+consensus passes the signal is diagnostic only: it is recorded with
+`top20_complete: false`, `requested_depth`, and
+`suppressed_reason: "insufficient_depth_for_top20_with_independent_consensus"`,
+and does not by itself refuse the SERP. Without passing independent consensus,
+or at effective depth >= 20, disjointness still fires and fails closed.
+`verify_serp_envelope()` normalizes unstamped organic blocks first (as
+`/serp/google/organic/live/advanced`) instead of skipping them, and
+`stamp_verified()` fails closed unless `organic_count` is a strict `int > 0`
+(`False`, `0`, `None`, and non-`int` values never verify). `serp()` validates
+`country` (`^[A-Za-z]{2}$`), `independent_sites`, `independent_items`, and
+`consensus_thresholds` before any paid DataForSEO request.
 
 **Fail closed.** When the final SERP is not verified, `serp()` raises
 `UnverifiedSerpError` (an `ApiError` with the stamped envelope on `.response`

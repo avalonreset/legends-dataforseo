@@ -229,8 +229,9 @@ def test_goto_items_key_by_breadcrumb_then_website_name():
 # --- verified stamping ------------------------------------------------------------------------
 
 def _clean(provider):
-    return {"status": "clean", "decoy": {"suspect": False, "fired": [], "provider_resolve": provider,
-                                         "signals": {"aio_organic_disjoint": {"fired": False}}}}
+    return {"status": "clean", "organic_count": 10,
+            "decoy": {"suspect": False, "fired": [], "provider_resolve": provider,
+                      "signals": {"aio_organic_disjoint": {"fired": False}}}}
 
 
 def test_stamp_verified_requires_independent_consensus():

@@ -2,6 +2,13 @@
 
 Start with the [installation guide](INSTALL.md). Discovery, estimates, and CLI
 previews run offline. Provider requests require your DataForSEO API credentials.
+A protected `serp` pull also runs the independent SERP Truth Gate by default:
+set `FIRECRAWL_API_KEY` (process environment, or the Windows user environment
+unless `FIRECRAWL_DISABLE_USER_ENV=1`) so the default consensus check can call
+`https://api.firecrawl.dev/v2/search` (2 Firecrawl credits). Without it, the
+SERP fails closed as unverified unless you supply your own independent view in
+Python. `legends-dataforseo doctor` reports `firecrawl_api_key_configured`
+without printing the key.
 
 ## 1. Preview
 
@@ -35,7 +42,11 @@ legends-dataforseo serp "technical SEO" --location-code 2840 --depth 10 --execut
 `--execute` authorizes the paid request. No further interactive prompt appears.
 The local check compares the supplied estimate with the ceiling before HTTP;
 it cannot enforce provider billing. CLI output is provider JSON and can include
-your query. Store it privately if you need to retain it.
+your query. Store it privately if you need to retain it. For `serp`, `--execute`
+also authorizes the outbound Truth Gate call to
+`https://api.firecrawl.dev/v2/search` (keyword, location, and 2-letter
+`--country`, default `US`); the preview shows this in its `truth_gate` block and
+makes no network request.
 
 ## 4. Inspect the response
 

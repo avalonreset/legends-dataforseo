@@ -6,6 +6,7 @@ import argparse
 from contextlib import nullcontext
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -197,6 +198,8 @@ def _run(args):
         result = estimate_cost(args.operation, tasks=args.tasks, depth=args.depth, items=args.items,
                                keyword=args.keyword)
     elif args.command == "doctor":
+        from .truth_gate import load_firecrawl_api_key
+
         creds = credential_status()
         login_set = bool(
             os.environ.get("DATAFORSEO_LOGIN")
@@ -215,6 +218,7 @@ def _run(args):
             "credentials": creds,
             "dataforseo_login_configured": login_set,
             "dataforseo_password_configured": password_set,
+            "firecrawl_api_key_configured": load_firecrawl_api_key() is not None,
             "live": False,
         }
         if args.live:
@@ -270,6 +274,9 @@ def _run(args):
                 if getattr(args, "os", None):
                     task["os"] = args.os
                 if args.command == "serp":
+                    _country = getattr(args, "country", "US")
+                    if not isinstance(_country, str) or not re.fullmatch(r"[A-Za-z]{2}", _country):
+                        raise RouteError("--country must be a 2-letter ASCII ISO code (e.g. US).")
                     if getattr(args, "no_resolve_poisoned", False):
                         if not allow_poisoned():
                             raise RouteError("--no-resolve-poisoned is refused: decoy defense is mandatory. Set "

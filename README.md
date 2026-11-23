@@ -137,7 +137,8 @@ legends-dataforseo serp "technical SEO" --location-code 2840
   "body": [{"language_code": "en", "keyword": "technical SEO", "depth": 10, "location_code": 2840,
             "resolve_poisoned_results": true, "resolve_goto_urls": true}],
   "estimated_cost_usd": null,
-  "max_cost_usd": null
+  "max_cost_usd": null,
+  "truth_gate": {"consensus_provider": "firecrawl", "country": "US", "local_maps_check": false}
 }
 ```
 
@@ -164,7 +165,7 @@ Paid CLI calls require three explicit flags (`--execute`, `--estimated-cost-usd`
 
 ### Credentials
 
-Set `DATAFORSEO_LOGIN` (or `DATAFORSEO_USERNAME`) and `DATAFORSEO_PASSWORD` in your shell or secret manager. The loader reads a complete process environment pair first, then the Windows user environment, and never mixes scopes or accepts secrets on command-line arguments ([`docs/INSTALL.md#credentials`](docs/INSTALL.md#credentials)). Run `legends-dataforseo doctor --live` to verify authentication with a zero-charge check.
+Set `DATAFORSEO_LOGIN` (or `DATAFORSEO_USERNAME`) and `DATAFORSEO_PASSWORD` in your shell or secret manager. The loader reads a complete process environment pair first, then the Windows user environment, and never mixes scopes or accepts secrets on command-line arguments ([`docs/INSTALL.md#credentials`](docs/INSTALL.md#credentials)). Run `legends-dataforseo doctor --live` to verify authentication with a zero-charge check. Protected organic SERPs are also verified by the independent SERP Truth Gate, which by default calls `https://api.firecrawl.dev/v2/search`: set `FIRECRAWL_API_KEY` in the environment (or the Windows user environment, unless `FIRECRAWL_DISABLE_USER_ENV=1`), or supply your own independent view in Python. `legends-dataforseo doctor` reports `firecrawl_api_key_configured` as a boolean and never prints the key.
 
 ### Python API
 
