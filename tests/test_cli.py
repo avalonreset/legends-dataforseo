@@ -128,7 +128,8 @@ class DoctorUnittestSuite(unittest.TestCase):
             "--location-name", "--device", "--os", "--max-poison-retries",
             "--labs-fallback", "--item-limit", "--keyword", "--no-resolve-poisoned",
             "--allow-unverified", "--verify-no-swap", "--resolve-goto-urls",
-            "--no-resolve-goto-urls",
+            "--no-resolve-goto-urls", "--consensus-provider", "--country",
+            "--local-maps-check",
         ):
             self.assertIn(flag, cli_doc)
         for export_name in legends_dataforseo.__all__:

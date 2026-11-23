@@ -107,6 +107,12 @@ def main(argv=None) -> int:
                                  help="Omit resolve_goto_urls (domains still come from breadcrumb/website_name)")
             command.add_argument("--verify-no-swap", action="store_true", default=False,
                                  help="Add one verification pull when resolve swapped nothing (doubles cost)")
+            command.add_argument("--consensus-provider", choices=["firecrawl", "none"], default="firecrawl",
+                                 help="Independent SERP Truth Gate provider (default: firecrawl; none fails closed)")
+            command.add_argument("--country", default="US",
+                                 help="Country code for independent consensus search (default: US)")
+            command.add_argument("--local-maps-check", action="store_true", default=False,
+                                 help="Cross-check local-intent organic SERPs against Google Maps results (+$0.002)")
         if name in ("competitors", "ranked-keywords", "relevant-pages"):
             command.add_argument("--item-limit", type=int, default=20 if name == "competitors" else 100,
                                  help="Maximum Lab items to request in task payload")
@@ -290,6 +296,12 @@ def _run(args):
                 preview_body, _ = _enforce_resolve(payload)
             result = {"preview": True, "path": path, "method": method, "body": preview_body,
                       "estimated_cost_usd": args.estimated_cost_usd, "max_cost_usd": args.max_cost_usd}
+            if args.command == "serp":
+                result["truth_gate"] = {
+                    "consensus_provider": getattr(args, "consensus_provider", "firecrawl"),
+                    "country": getattr(args, "country", "US"),
+                    "local_maps_check": getattr(args, "local_maps_check", False),
+                }
             if (
                 method == "POST"
                 and _is_organic_serp_request_path(standard_path)
@@ -320,6 +332,9 @@ def _run(args):
                     allow_unverified=getattr(args, "allow_unverified", False),
                     resolve_goto_urls=getattr(args, "resolve_goto_urls", None),
                     verify_no_swap=getattr(args, "verify_no_swap", False),
+                    consensus_provider=getattr(args, "consensus_provider", "firecrawl"),
+                    country=getattr(args, "country", "US"),
+                    local_maps_check=getattr(args, "local_maps_check", False),
                     confirm=True,
                     timeout=args.timeout,
                     consumer="cli",

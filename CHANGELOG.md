@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Independent SERP Truth Gate (`src/legends_dataforseo/truth_gate.py`, `serp_integrity.py`, `client.py`, `cli.py`)**: closes the residual partial-decoy and `from_web == 0` / `from_web > 0` provider-only blind spots by verifying every protected Google organic SERP against an independent search view (default: stdlib HTTPS-only Firecrawl `/v2/search` using `FIRECRAWL_API_KEY` from the environment, or caller-supplied `independent_sites` / `independent_items` / `consensus_provider`).
+- Provider-only signals (`provider_from_web`, `double_pull_stable`, `provider_clean_no_decoy_signals`) are no longer sufficient for `serp_integrity.verified = true`. Verified envelopes carry `verified_basis` in `VERIFIED_BASES` (`independent_consensus` or `independent_consensus_repaired`); raw `api_request` and queued `task_get` envelopes stay `verified = false` until checked with `verify_serp_envelope()`.
+- Disagreement triggers bounded DataForSEO re-pulls within `max_poison_retries` and cumulative `max_cost_usd`, then AIO-corroborated independent repair when Google's AI Overview (`>= 3` cited sites) confirms DFS is poisoned (`<= 0.60`) and the independent view matches (`>= 0.65`), else fails closed with `UnverifiedSerpError`.
+- Added `--consensus-provider`, `--country`, and `--local-maps-check` (`local_maps_check` / `maps_sites` diagnostic corroboration) to `legends-dataforseo serp`.
+
 ## 0.1.14 - 2026-11-22
 
 - Sync vendored `cto-legends` router skill pin (`69ddc4f68faa`), enforce LF line endings via `.gitattributes`, and standardize release artifact checksums.

@@ -233,33 +233,53 @@ def _clean(provider):
                                          "signals": {"aio_organic_disjoint": {"fired": False}}}}
 
 
-def test_stamp_verified_requires_resolve_evidence():
-    swapped = stamp_verified(_clean("resolved"))
-    assert swapped["verified"] is True and swapped["verified_basis"] == "provider_from_web"
-    assert swapped["integrity"] == "protected" and "unverified" not in swapped
-    assert swapped["signals_used"] == ["aio_organic_disjoint"]
-    stable = stamp_verified(_clean("requested_no_swap"), verification={"status": "stable"})
-    assert stable["verified"] is True and stable["verified_basis"] == "double_pull_stable"
-    for vstatus in (None, "not_run", "not_needed", "skipped_disabled"):
-        single = stamp_verified(_clean("requested_no_swap"), verification={"status": vstatus})
-        assert single["verified"] is True and single["verified_basis"] == "provider_clean_no_decoy_signals"
-    for vstatus in ("unstable", "verify_pull_suspect", "disagreed", "failed", "verify_failed", "skipped_budget"):
+def test_stamp_verified_requires_independent_consensus():
+    # Provider-only signals (from_web > 0, from_web == 0, double_pull_stable) are NEVER sufficient alone.
+    for vstatus in (None, "not_run", "not_needed", "skipped_disabled", "stable", "resolved_on_verify"):
+        for prov in ("resolved", "requested_no_swap"):
+            rejected = stamp_verified(_clean(prov), verification={"status": vstatus})
+            assert rejected["verified"] is False and rejected["unverified"] is True, (prov, vstatus)
+            assert rejected["verified_basis"] is None
+
+    # Independent consensus grants verified=True.
+    cons = stamp_verified(
+        _clean("resolved"),
+        verification={"status": "independent_consensus", "consensus_passed": True},
+    )
+    assert cons["verified"] is True and cons["verified_basis"] == "independent_consensus"
+    assert cons["integrity"] == "protected" and "unverified" not in cons
+    assert cons["signals_used"] == ["aio_organic_disjoint"]
+
+    repaired = stamp_verified(
+        _clean("resolved"),
+        verification={"status": "repaired_on_repull", "consensus_passed": True},
+    )
+    assert repaired["verified"] is True and repaired["verified_basis"] == "independent_consensus_repaired"
+
+    repaired_ind = stamp_verified(
+        _clean("requested_no_swap"),
+        verification={"status": "repaired_from_independent", "consensus_passed": True},
+    )
+    assert repaired_ind["verified"] is True and repaired_ind["verified_basis"] == "independent_consensus_repaired"
+
+    for vstatus in ("unstable", "verify_pull_suspect", "disagreed", "consensus_disagreed",
+                    "failed", "verify_failed", "skipped_budget", "independent_unavailable"):
         rejected = stamp_verified(_clean("requested_no_swap"), verification={"status": vstatus})
         assert rejected["verified"] is False and rejected["unverified"] is True, vstatus
         assert rejected["verified_basis"] is None
     budget = stamp_verified(_clean("requested_no_swap"), verification={
         "status": "failed", "reason": "max_cost_usd_insufficient_for_second_pull"})
     assert any("max_cost_usd_insufficient_for_second_pull" in r for r in budget["unverified_reasons"])
-    canary = _clean("requested_no_swap")
-    canary["canary_hits"] = ["wikipedia.org"]
-    assert stamp_verified(canary)["verified"] is False
-    canary_swapped = _clean("resolved")
-    canary_swapped["canary_hits"] = ["wikipedia.org"]  # informational query, provider-resolved
-    assert stamp_verified(canary_swapped)["verified"] is True
-    fired = _clean("requested_no_swap")
+    fired = _clean("resolved")
     fired["decoy"]["fired"] = ["aio_organic_disjoint"]
-    assert stamp_verified(fired)["verified"] is False
-    unprotected = stamp_verified(_clean("resolved"), unprotected=True)
+    assert stamp_verified(
+        fired, verification={"status": "independent_consensus", "consensus_passed": True}
+    )["verified"] is False
+    unprotected = stamp_verified(
+        _clean("resolved"),
+        verification={"status": "independent_consensus", "consensus_passed": True},
+        unprotected=True,
+    )
     assert unprotected["verified"] is False and unprotected["integrity"] == "unprotected"
     disabled = stamp_verified(_clean("not_requested"), unprotected=True)
     assert disabled["verified"] is False
@@ -289,12 +309,14 @@ def test_api_request_injects_resolve_on_every_organic_task(monkeypatch):
     assert sent[0][1][0]["resolve_poisoned_results"] is True and "resolve_poisoned_results" not in body[0]
     assert "resolve_goto_urls" not in sent[0][1][0]  # raw calls never pay redirect latency implicitly
     assert sent[0][2] == SERP_TIMEOUT_S == 300.0
-    # resolve confirmed sent, clean, no decoy signal, no second pull requested
-    assert _integrity(raw)["verified"] is True
-    assert _integrity(raw)["verified_basis"] == "provider_clean_no_decoy_signals"
+    # Provider-only raw api_request cannot self-verify without independent consensus (Truth Gate).
+    assert _integrity(raw)["verified"] is False
+    assert _integrity(raw)["verified_basis"] is None
+    assert _integrity(raw)["integrity"] == "protected"
     swapped = api_request(ORGANIC_LIVE, body, credentials=AUTH, confirm=True)
-    assert sent[1][1][0]["resolve_poisoned_results"] is True and _integrity(swapped)["verified"] is True
-    assert _integrity(swapped)["verified_basis"] == "provider_from_web"
+    assert sent[1][1][0]["resolve_poisoned_results"] is True
+    assert _integrity(swapped)["verified"] is False
+    assert _integrity(swapped)["verified_basis"] is None
     api_request("/v3/serp/google/maps/live/advanced", body, credentials=AUTH, confirm=True)
     assert "resolve_poisoned_results" not in sent[2][1][0]
 
@@ -319,12 +341,13 @@ def test_api_request_refuses_unprotected_organic_tasks(monkeypatch):
 
 def test_serp_sends_resolve_and_verifies_with_stable_pull(monkeypatch):
     sent = fake_transport(monkeypatch, [renv(REAL), renv(REAL, task_id="t-2")])
-    result = serp("fractional cto", verify_no_swap=True, credentials=AUTH, confirm=True,
+    result = serp("fractional cto", verify_no_swap=True, independent_sites=REAL, credentials=AUTH, confirm=True,
                   estimated_cost_usd=0.004, max_cost_usd=0.02)
     assert len(sent) == 2 and all(body[0]["resolve_poisoned_results"] is True for _, body, _ in sent)
     integrity = _integrity(result)
-    assert integrity["status"] == "clean" and integrity["verification"]["status"] == "stable"
-    assert integrity["verified"] is True and integrity["verified_basis"] == "double_pull_stable"
+    assert integrity["status"] == "clean" and integrity["verification"]["status"] == "independent_consensus"
+    assert integrity["verification"]["second_pull"]["status"] == "stable"
+    assert integrity["verified"] is True and integrity["verified_basis"] == "independent_consensus"
     assert "unverified" not in integrity and "unresolved" not in integrity
     meta = result["legends_serp"]
     assert meta["verified"] is True and meta["integrity"] == "protected"
@@ -334,11 +357,12 @@ def test_serp_sends_resolve_and_verifies_with_stable_pull(monkeypatch):
     assert meta["cost_usd_total"] == 0.008
 
 
-def test_serp_provider_swaps_verify_in_one_pull(monkeypatch):
+def test_serp_provider_swaps_verify_in_one_pull_with_independent_consensus(monkeypatch):
     sent = fake_transport(monkeypatch, [renv(REAL, checks=["from_web"])])
-    result = serp("fractional cto", credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
+    result = serp("fractional cto", independent_sites=REAL, credentials=AUTH, confirm=True,
+                  estimated_cost_usd=0.004, max_cost_usd=0.02)
     assert len(sent) == 1
-    assert _integrity(result)["verified_basis"] == "provider_from_web"
+    assert _integrity(result)["verified_basis"] == "independent_consensus"
     assert result["legends_serp"]["verified"] is True
 
 
@@ -364,7 +388,8 @@ def test_escape_hatch_returns_stamped_unprotected(monkeypatch):
     assert _integrity(off)["verification"]["status"] == "resolve_off"
     assert off["legends_serp"]["integrity"] == "unprotected" and off["legends_serp"]["verified"] is False
     # The env alone never turns resolve off.
-    serp("fractional cto", credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
+    serp("fractional cto", independent_sites=REAL, credentials=AUTH, confirm=True,
+         estimated_cost_usd=0.004, max_cost_usd=0.02)
     assert sent[1][1][0]["resolve_poisoned_results"] is True
 
 
@@ -379,10 +404,12 @@ def test_suspect_decoy_is_repulled_and_verified(monkeypatch):
     decoy_env = renv(FILLER, aio_domains=REAL[:5], task_id="t-decoy", cost=0.002)
     fixed_env = renv(REAL, checks=["from_web"], task_id="t-fixed")
     sent = fake_transport(monkeypatch, [decoy_env, fixed_env])
-    result = serp("fractional cto", credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
+    result = serp("fractional cto", independent_sites=REAL, credentials=AUTH, confirm=True,
+                  estimated_cost_usd=0.004, max_cost_usd=0.02)
     assert all(body[0]["resolve_poisoned_results"] is True for _, body, _ in sent)
     integrity = _integrity(result)
     assert integrity["status"] == "clean" and integrity["verified"] is True
+    assert integrity["verified_basis"] == "independent_consensus_repaired"
     assert integrity["decoy"]["provider_resolve"] == "resolved"
     assert integrity["attempt_task_ids"] == ["t-decoy", "t-fixed"]
     assert integrity["repull_top10_overlap"] == 0.0
@@ -436,20 +463,21 @@ def test_incumbent_sites_flag_a_surface_clean_decoy(monkeypatch):
 
 def test_verification_pull_with_swaps_is_adopted(monkeypatch):
     fake_transport(monkeypatch, [renv(FILLER), renv(REAL, checks=["from_web"], task_id="t-2")])
-    result = serp("fractional cto", verify_no_swap=True, credentials=AUTH, confirm=True,
+    result = serp("fractional cto", independent_sites=REAL, credentials=AUTH, confirm=True,
                   estimated_cost_usd=0.004, max_cost_usd=0.02)
     integrity = _integrity(result)
     assert integrity["status"] == "clean" and integrity["decoy"]["provider_resolve"] == "resolved"
     assert integrity["verified"] is True
-    assert result["legends_serp"]["verification"]["status"] == "resolved_on_verify"
+    assert integrity["verified_basis"] == "independent_consensus_repaired"
+    assert result["legends_serp"]["verification"]["status"] == "repaired_on_repull"
     assert organic_site_keys(result["tasks"][0]["result"][0])[0] == REAL[0]
 
 
 def test_unstable_no_swap_pulls_fail_closed(monkeypatch):
     fake_transport(monkeypatch, [renv(FILLER), renv(REAL, task_id="t-2")])
     with pytest.raises(UnverifiedSerpError) as caught:
-        serp("fractional cto", verify_no_swap=True, credentials=AUTH, confirm=True,
-             estimated_cost_usd=0.004, max_cost_usd=0.02)
+        serp("fractional cto", verify_no_swap=True, max_poison_retries=0, consensus_provider=None,
+             credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
     integrity = _integrity(caught.value.response)
     assert integrity["status"] == "unverified_decoy" and integrity["unresolved"] is True
     assert integrity["verification"]["status"] == "unstable"
@@ -459,24 +487,31 @@ def test_unstable_no_swap_pulls_fail_closed(monkeypatch):
 def test_verify_no_swap_budget_shortfall_fails_closed(monkeypatch):
     sent = fake_transport(monkeypatch, [renv(REAL), renv(REAL)])
     with pytest.raises(UnverifiedSerpError) as budget:
-        serp("fractional cto", verify_no_swap=True, credentials=AUTH, confirm=True,
+        serp("fractional cto", verify_no_swap=True, independent_sites=REAL, credentials=AUTH, confirm=True,
              estimated_cost_usd=0.004, max_cost_usd=0.005)
     assert len(sent) == 1
     integrity = _integrity(budget.value.response)
     assert integrity["status"] == "clean" and integrity["verified"] is False
-    assert integrity["verification"] == {"status": "failed", "reason": "max_cost_usd_insufficient_for_second_pull"}
+    assert integrity["verification"]["status"] == "failed"
+    assert integrity["verification"]["reason"] == "max_cost_usd_insufficient_for_second_pull"
     assert budget.value.response["legends_serp"]["budget_exhausted"] is True
     with pytest.raises(ValueError):
         serp("x", verify_no_swap="yes", credentials=AUTH, confirm=True)
 
 
-def test_default_single_pull_verifies_clean_no_swap_serp(monkeypatch):
-    sent = fake_transport(monkeypatch, [renv(REAL)])
-    result = serp("fractional cto", credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.004)
-    assert len(sent) == 1  # verify_no_swap defaults to False: no doubled cost on clean SERPs
+def test_default_single_pull_requires_independent_consensus(monkeypatch):
+    sent = fake_transport(monkeypatch, [renv(REAL), renv(REAL)])
+    # Without independent view (missing FIRECRAWL_API_KEY), fails closed instead of self-verifying.
+    with pytest.raises(UnverifiedSerpError) as missing:
+        serp("fractional cto", credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.004)
+    assert _integrity(missing.value.response)["verified"] is False
+    assert _integrity(missing.value.response)["verification"]["status"] == "independent_unavailable"
+    # With independent consensus supplied, verifies cleanly in one DFS pull.
+    result = serp("fractional cto", independent_sites=REAL, credentials=AUTH, confirm=True,
+                  estimated_cost_usd=0.004, max_cost_usd=0.004)
+    assert len(sent) == 2
     integrity = _integrity(result)
-    assert integrity["verified"] is True and integrity["verified_basis"] == "provider_clean_no_decoy_signals"
-    assert integrity["verification"] == {"status": "not_run", "reason": "verify_no_swap_disabled"}
+    assert integrity["verified"] is True and integrity["verified_basis"] == "independent_consensus"
     assert result["legends_serp"]["verified"] is True
     assert [a["reason"] for a in result["legends_serp"]["attempts"]] == ["initial"]
 
@@ -485,14 +520,14 @@ def test_default_single_pull_still_fails_closed_on_decoy_signal(monkeypatch):
     stuck = renv(FILLER, aio_domains=REAL[:5])
     sent = fake_transport(monkeypatch, [stuck])
     with pytest.raises(UnverifiedSerpError):
-        serp("fractional cto", max_poison_retries=0, credentials=AUTH, confirm=True,
+        serp("fractional cto", max_poison_retries=0, independent_sites=REAL, credentials=AUTH, confirm=True,
              estimated_cost_usd=0.004, max_cost_usd=0.004)
     assert len(sent) == 1
 
 
 def test_resolve_goto_urls_defaults_by_depth(monkeypatch):
     sent = fake_transport(monkeypatch, [renv(REAL)] * 4)
-    opts = dict(credentials=AUTH, confirm=True)
+    opts = dict(credentials=AUTH, confirm=True, independent_sites=REAL)
     serp("fractional cto", **opts)
     assert sent[-1][1][0]["resolve_goto_urls"] is True and sent[-1][1][0]["depth"] == 10
     serp("fractional cto", depth=100, **opts)
@@ -510,7 +545,8 @@ def test_transient_40101_is_retried_with_backoff(monkeypatch):
     slept = []
     monkeypatch.setattr(client, "_sleep", slept.append)
     sent = fake_transport(monkeypatch, [transient(), renv(REAL, checks=["from_web"], task_id="t-ok")])
-    result = serp("fractional cto", credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
+    result = serp("fractional cto", independent_sites=REAL, credentials=AUTH, confirm=True,
+                  estimated_cost_usd=0.004, max_cost_usd=0.02)
     assert len(sent) == 2 and slept == [2.0]
     attempts = result["legends_serp"]["attempts"]
     assert [a["reason"] for a in attempts] == ["initial", "initial:transient_retry_1"]
@@ -553,13 +589,24 @@ def test_cli_preview_always_sends_resolve(monkeypatch, capsys):
 
 
 def test_cli_execute_fails_closed_unless_allow_unverified(monkeypatch, capsys):
+    from legends_dataforseo import truth_gate
+
     monkeypatch.setenv("DATAFORSEO_LOGIN", "fixture-login")
     monkeypatch.setenv("DATAFORSEO_PASSWORD", "fixture-secret")
+    monkeypatch.setattr(
+        truth_gate,
+        "firecrawl_search_view",
+        lambda kw, **kw_args: {
+            "provider": "firecrawl_search", "ok": True, "sites": list(REAL),
+            "items": [], "latency_ms": 12.0, "credits_estimated": 2, "error": None,
+        },
+    )
     sent = fake_transport(monkeypatch, [renv(REAL), renv(REAL), renv(REAL), renv(REAL, task_id="t-4")])
     argv = ["serp", "fractional cto", "--execute", "--estimated-cost-usd", "0.004", "--max-cost-usd", "0.004"]
-    assert cli.main(argv) == 0  # default single pull, clean, no decoy signal
+    assert cli.main(argv) == 0  # independent consensus passes in one DFS pull
     out = json.loads(capsys.readouterr().out)
     assert out["legends_serp"]["verified"] is True and len(sent) == 1
+    assert out["legends_serp"]["verified_basis"] == "independent_consensus"
     # --verify-no-swap with a cap that cannot cover the second pull fails closed
     assert cli.main(argv + ["--verify-no-swap"]) == 2
     assert "UnverifiedSerpError" in capsys.readouterr().err
@@ -573,7 +620,8 @@ def test_cli_execute_fails_closed_unless_allow_unverified(monkeypatch, capsys):
     deep = fake_transport(monkeypatch, [renv(REAL), renv(REAL, task_id="t-5")])
     assert cli.main(wide) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["legends_serp"]["verification"]["status"] == "stable"
+    assert out["legends_serp"]["verification"]["status"] == "independent_consensus"
+    assert out["legends_serp"]["verification"]["second_pull"]["status"] == "stable"
     assert len(deep) == 2 and all("resolve_goto_urls" not in body[0] for _, body, _ in deep)
 
 
@@ -650,8 +698,13 @@ def test_task_post_enforces_resolve_and_task_get_is_stamped(monkeypatch):
     assert queued["tasks"][0]["id"] == "q-1"  # task id preserved, no stamping on the post envelope
     got = api_request("/v3/serp/google/organic/task_get/advanced/q-1", credentials=AUTH)
     assert sent[1][1] is None  # free GET, no body, no confirm needed
+    # Queued task_get is provider-only until run through verify_serp_envelope().
+    assert _integrity(got)["verified"] is False
+    assert _integrity(got)["integrity"] == "protected"
+    from legends_dataforseo import verify_serp_envelope
+    verify_serp_envelope(got, independent_sites=REAL)
     assert _integrity(got)["verified"] is True
-    assert _integrity(got)["verified_basis"] == "provider_clean_no_decoy_signals"
+    assert _integrity(got)["verified_basis"] == "independent_consensus"
     decoy = api_request("/v3/serp/google/organic/task_get/advanced/q-2", credentials=AUTH)
     assert _integrity(decoy)["status"] == "suspect_decoy" and _integrity(decoy)["verified"] is False
     unconfirmed = api_request("/v3/serp/google/organic/task_get/advanced/q-3", credentials=AUTH)
@@ -749,7 +802,7 @@ def test_serp_5x_operator_detection_and_cost_preflight(monkeypatch, capsys):
     assert sent == []
 
     # Properly budgeted 5x operator query succeeds without double-multiplying.
-    ok = serp("site:reddit.com auto repair", credentials=AUTH, confirm=True,
+    ok = serp("site:reddit.com auto repair", independent_sites=REAL, credentials=AUTH, confirm=True,
               estimated_cost_usd=0.02, max_cost_usd=0.02)
     assert len(sent) == 1
     assert ok["legends_serp"]["operator_cost_multiplier"] == 5
@@ -844,7 +897,7 @@ def test_case_normalized_paths_cannot_bypass_organic_or_batch_guards(monkeypatch
     res = api_request("/SERP/Google/Organic/Live/Advanced", [{"keyword": "fractional cto"}],
                       credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.004)
     assert sent[0][1][0]["resolve_poisoned_results"] is True
-    assert _integrity(res)["verified"] is True
+    assert _integrity(res)["integrity"] == "protected" and _integrity(res)["verified"] is False
 
 
 def test_depth_float_and_max_crawl_pages_and_raw_organic_floor_enforced(monkeypatch, tmp_path, capsys):
@@ -926,7 +979,7 @@ def test_operator_punctuation_and_url_query_param_detection(monkeypatch):
 def test_incumbent_sites_triggers_repull_and_preserves_verify_pull_suspect(monkeypatch):
     # Surface-clean decoy (no AIO) caught by incumbent_sites -> re-pulled within max_poison_retries -> verified.
     sent = fake_transport(monkeypatch, [renv(FILLER), renv(REAL, checks=["from_web"], task_id="t-2")])
-    result = serp("fractional cto", incumbent_sites=REAL[:5], max_poison_retries=2,
+    result = serp("fractional cto", incumbent_sites=REAL[:5], independent_sites=REAL, max_poison_retries=2,
                   credentials=AUTH, confirm=True, estimated_cost_usd=0.004, max_cost_usd=0.02)
     assert len(sent) == 2
     assert [a["status"] for a in result["legends_serp"]["attempts"]] == ["suspect_decoy", "clean"]

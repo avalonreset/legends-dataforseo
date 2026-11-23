@@ -711,30 +711,41 @@ def _serp_impl(
     verify_no_swap: bool = False,
     allow_unverified: bool = False,
     resolve_goto_urls: bool | None = None,
+    consensus_provider: Any = "firecrawl",
+    independent_sites: list[str] | None = None,
+    independent_items: list[dict[str, Any]] | None = None,
+    country: str = "US",
+    local_maps_check: bool = False,
+    maps_sites: list[str] | None = None,
+    consensus_thresholds: dict[str, Any] | None = None,
     **request_options: Any,
 ) -> dict[str, Any]:
-    """One fail-closed Google organic live task (resolve mandatory, decoy re-pull, optional verification pull).
+    """One fail-closed Google organic live task gated by independent cross-provider consensus.
 
     resolve_poisoned_results is always sent. resolve_poisoned_results=False is refused unless
     LEGENDS_DFS_ALLOW_POISONED=1, and such results are stamped integrity "unprotected".
-    resolve_goto_urls=None sends resolve_goto_urls=true for depth <= 10 (page-1 pulls that need
-    unwrapped URLs, about 2-3 s extra) and omits it for depth > 10 (deep rank tracking, where
-    breadcrumb / website_name domain extraction is free and redirect unwrapping costs ~40 s).
-    Pipeline: resolve pull -> decoy detector -> suspect: re-pull with resolve (max_poison_retries,
-    cumulative max_cost_usd) -> stamp serp_integrity.verified. verify_no_swap=True adds one
-    verification pull when resolve swapped nothing (doubles cost on clean SERPs); if the cap cannot
-    cover it the verification is "failed" and the SERP fails closed. A SERP still suspect ends as
-    status unverified_decoy (decoy flavor) or suspect_poisoned with unresolved=True; it is never
-    relabelled clean. Fail closed: an unverified protected SERP raises UnverifiedSerpError (the
-    stamped envelope is on `.response`) unless allow_unverified=True. 40101 task errors are retried.
+    Every protected SERP (whether from_web > 0 or from_web == 0) is verified against an
+    independent search view (default: Firecrawl /v2/search, or caller-supplied independent_sites /
+    independent_items / consensus_provider callable). Disagreement triggers bounded DataForSEO
+    re-pulls (within max_poison_retries and max_cost_usd), then AIO-corroborated repair if
+    available, else fails closed with UnverifiedSerpError unless allow_unverified=True.
     """
     import time as _time
     from .serp_integrity import (
+        ALLOW_POISONED_ENV,
         DECOY_THRESHOLDS,
+        allow_poisoned,
         apply_decoy_assessment,
         assess_decoy_signals,
         organic_site_keys,
         overlap_ratio,
+        site_key,
+        stamp_verified,
+    )
+    from .truth_gate import (
+        evaluate_independent_consensus,
+        fetch_independent_view,
+        try_aio_corroborated_repair,
     )
 
     if not isinstance(keyword, str) or not keyword.strip():
@@ -747,9 +758,12 @@ def _serp_impl(
         raise ValueError("verify_no_swap must be a boolean")
     if type(allow_unverified) is not bool:
         raise ValueError("allow_unverified must be a boolean")
+    if type(local_maps_check) is not bool:
+        raise ValueError("local_maps_check must be a boolean")
     if resolve_goto_urls is not None and type(resolve_goto_urls) is not bool:
         raise ValueError("resolve_goto_urls must be a boolean or None")
-    from .serp_integrity import ALLOW_POISONED_ENV, allow_poisoned, stamp_verified
+    if consensus_provider not in ("firecrawl", "none", None) and not callable(consensus_provider):
+        raise ValueError("consensus_provider must be 'firecrawl', 'none', None, or a callable")
     if resolve_poisoned_results is None or resolve_poisoned_results is True:
         resolve = True
     elif resolve_poisoned_results is False:
@@ -874,6 +888,143 @@ def _serp_impl(
     spent_usd = _step_spend(result, serp_step_estimate)
     budget_exhausted = False
 
+    def _provider_resolve(envelope: dict[str, Any]) -> str | None:
+        for integrity in _serp_integrities(envelope):
+            decoy = integrity.get("decoy")
+            if isinstance(decoy, dict):
+                return decoy.get("provider_resolve")
+        return None
+
+    def _from_web_count(envelope: dict[str, Any]) -> int:
+        for integrity in _serp_integrities(envelope):
+            decoy = integrity.get("decoy")
+            if isinstance(decoy, dict):
+                return int(decoy.get("from_web_count") or 0)
+        return 0
+
+    # Optional local Google Maps diagnostic cross-check (when maps_sites or local_maps_check supplied).
+    maps_view: dict[str, Any] | None = None
+    effective_maps_sites: list[str] | None = list(maps_sites) if maps_sites is not None else None
+    if local_maps_check and effective_maps_sites is None and resolve:
+        maps_est = float(estimate_cost("maps", tasks=1, depth=20)["estimated_cost_usd"] or 0.002)
+        maps_opts = dict(request_options)
+        can_run_maps = True
+        if maps_opts.get("max_cost_usd") is not None:
+            rem = round(_money(maps_opts["max_cost_usd"], "max_cost_usd") - spent_usd, 6)
+            if rem < maps_est:
+                can_run_maps = False
+                budget_exhausted = True
+            else:
+                maps_opts["max_cost_usd"] = rem
+                maps_opts["estimated_cost_usd"] = maps_est
+        if can_run_maps:
+            maps_task: dict[str, Any] = {"keyword": keyword, "language_code": language_code, "depth": 20}
+            if location_coordinate is not None:
+                maps_task["location_coordinate"] = location_coordinate
+            elif location_name is not None:
+                maps_task["location_name"] = location_name
+            else:
+                maps_task["location_code"] = 2840 if location_code is None else location_code
+            m_t0 = _time.perf_counter()
+            try:
+                maps_resp = api_request(route_for("maps")["path"], [maps_task], **maps_opts)
+                m_lat = round((_time.perf_counter() - m_t0) * 1000.0, 1)
+                spent_usd = round(spent_usd + _step_spend(maps_resp, maps_est), 6)
+                m_keys: list[str] = []
+                for mt in maps_resp.get("tasks") or []:
+                    for mr in (mt.get("result") or []) if isinstance(mt, dict) else []:
+                        for mit in (mr.get("items") or []) if isinstance(mr, dict) else []:
+                            if isinstance(mit, dict):
+                                mk = site_key(mit.get("domain") or mit.get("url"))
+                                if mk and mk not in m_keys:
+                                    m_keys.append(mk)
+                effective_maps_sites = m_keys
+                maps_view = {
+                    "ok": True,
+                    "sites_count": len(m_keys),
+                    "cost_usd": float(maps_resp.get("cost") or 0.0),
+                    "latency_ms": m_lat,
+                }
+            except ApiError as exc:
+                maps_view = {"ok": False, "error": type(exc).__name__, "cost_usd": 0.0, "latency_ms": 0.0}
+        else:
+            maps_view = {"ok": False, "error": "max_cost_usd_insufficient_for_maps_check", "cost_usd": 0.0}
+
+    # Fetch independent search view once for every protected pull (both from_web == 0 and from_web > 0).
+    ind_view: dict[str, Any] | None = None
+    if resolve:
+        ind_view = fetch_independent_view(
+            keyword,
+            location_name=location_name,
+            country=country,
+            independent_sites=independent_sites,
+            independent_items=independent_items,
+            consensus_provider=consensus_provider,
+            timeout=min(30.0, float(request_options["timeout"])) if request_options.get("timeout") else 30.0,
+        )
+
+    def _apply_truth_gate(envelope: dict[str, Any]) -> dict[str, Any] | None:
+        """Evaluate independent consensus + Maps diagnostic against `envelope` and update decoy signals."""
+        if not ind_view or not ind_view.get("ok"):
+            if effective_maps_sites is not None:
+                for t in envelope.get("tasks") or []:
+                    if not isinstance(t, dict):
+                        continue
+                    t_data = t.get("data") if isinstance(t.get("data"), dict) else None
+                    for res_obj in t.get("result") or []:
+                        if isinstance(res_obj, dict) and isinstance(res_obj.get("serp_integrity"), dict):
+                            apply_decoy_assessment(
+                                res_obj["serp_integrity"],
+                                assess_decoy_signals(
+                                    res_obj,
+                                    task_data=t_data,
+                                    incumbent_sites=incumbent_sites,
+                                    maps_sites=effective_maps_sites,
+                                ),
+                            )
+            return None
+        first_blk = _serp_first_block(envelope)
+        if first_blk is None:
+            return None
+        dfs_top10 = organic_site_keys(first_blk, limit=10)
+        fw = _from_web_count(envelope)
+        cons = evaluate_independent_consensus(
+            dfs_top10,
+            ind_view["sites"],
+            from_web_count=fw,
+            thresholds=consensus_thresholds,
+        )
+        for t in envelope.get("tasks") or []:
+            if not isinstance(t, dict):
+                continue
+            t_data = t.get("data") if isinstance(t.get("data"), dict) else None
+            for res_obj in t.get("result") or []:
+                if isinstance(res_obj, dict) and isinstance(res_obj.get("serp_integrity"), dict):
+                    blk_top10 = organic_site_keys(res_obj, limit=10)
+                    blk_fw = int(((res_obj["serp_integrity"].get("decoy") or {}).get("from_web_count")) or 0)
+                    blk_cons = (
+                        cons
+                        if res_obj is first_blk
+                        else evaluate_independent_consensus(
+                            blk_top10, ind_view["sites"], from_web_count=blk_fw, thresholds=consensus_thresholds
+                        )
+                    )
+                    apply_decoy_assessment(
+                        res_obj["serp_integrity"],
+                        assess_decoy_signals(
+                            res_obj,
+                            task_data=t_data,
+                            incumbent_sites=incumbent_sites,
+                            independent_sites=ind_view["sites"],
+                            maps_sites=effective_maps_sites,
+                            consensus_result=blk_cons,
+                        ),
+                    )
+        attempts[-1]["status"] = _serp_status(envelope)
+        return cons
+
+    consensus = _apply_truth_gate(result)
+
     attempt_ids = [tid for a in attempts for tid in a["task_ids"]]
     retries_used = 0
     previous_top10: list[str] | None = None
@@ -881,7 +1032,6 @@ def _serp_impl(
         status_before = _serp_status(result)
         retry_task = dict(task)
         if status_before == "suspect_decoy":
-            # Decoy flavor: re-pull with provider-side Web-mode resolve.
             retry_task["resolve_poisoned_results"] = True
         if "location_coordinate" in retry_task:
             retry_task.pop("location_coordinate", None)
@@ -904,95 +1054,168 @@ def _serp_impl(
         result = _run(retry_task, retry_opts, status_before)
         spent_usd = round(spent_usd + _step_spend(result, step_est), 6)
         attempt_ids.extend(attempts[-1]["task_ids"])
+        consensus = _apply_truth_gate(result)
 
-    def _task_data(envelope: dict[str, Any]) -> dict[str, Any] | None:
-        for t in envelope.get("tasks") or []:
-            if isinstance(t, dict) and isinstance(t.get("data"), dict):
-                return t["data"]
-        return None
-
-    def _provider_resolve(envelope: dict[str, Any]) -> str | None:
-        for integrity in _serp_integrities(envelope):
-            decoy = integrity.get("decoy")
-            if isinstance(decoy, dict):
-                return decoy.get("provider_resolve")
-        return None
-
-    # Fail-open guard: resolve requested, nothing swapped, looks clean -> one verification pull.
-    verification: dict[str, Any] = {"status": "not_needed"}
-    verify_top10: list[str] | None = None
-    if not attempts[-1]["resolve_poisoned_results"]:
-        verification = {"status": "resolve_off"}
-    elif _serp_status(result) == "clean" and _provider_resolve(result) != "resolved":
-        # Keyed on what we sent, not on DFS echoing resolve_poisoned_results back in task data.
-        if not verify_no_swap:
-            verification = {"status": "not_run", "reason": "verify_no_swap_disabled"}
-        else:
-            verify_task = dict(task)
-            verify_task["resolve_poisoned_results"] = True
-            if "location_coordinate" in verify_task:
-                verify_task.pop("location_coordinate", None)
-                if location_name is not None:
-                    verify_task["location_name"] = location_name
-                else:
-                    verify_task["location_code"] = 2840 if location_code is None else location_code
-            step_est = _step_estimate(True)
-            verify_opts = dict(request_options)
-            affordable = True
-            if verify_opts.get("max_cost_usd") is not None:
-                remaining_max = round(_money(verify_opts["max_cost_usd"], "max_cost_usd") - spent_usd, 6)
-                if remaining_max < step_est:
-                    affordable = False
-                    budget_exhausted = True
-                else:
-                    verify_opts["max_cost_usd"] = remaining_max
-                    verify_opts["estimated_cost_usd"] = step_est
-            if not affordable:
-                verification = {"status": "failed", "reason": "max_cost_usd_insufficient_for_second_pull"}
+    # Optional legacy second-pull stability check when verify_no_swap=True (additional telemetry;
+    # independent consensus remains mandatory for verified=True).
+    second_pull_info: dict[str, Any] | None = None
+    if verify_no_swap and resolve and _serp_status(result) == "clean" and _provider_resolve(result) != "resolved":
+        verify_task = dict(task)
+        verify_task["resolve_poisoned_results"] = True
+        if "location_coordinate" in verify_task:
+            verify_task.pop("location_coordinate", None)
+            if location_name is not None:
+                verify_task["location_name"] = location_name
             else:
-                first_block = _serp_first_block(result)
-                first_top = organic_site_keys(first_block, limit=10) if first_block else []
-                candidate = _run(verify_task, verify_opts, "verify_no_swap")
-                spent_usd = round(spent_usd + _step_spend(candidate, step_est), 6)
-                attempt_ids.extend(attempts[-1]["task_ids"])
-                cand_block = _serp_first_block(candidate)
-                cand_top = organic_site_keys(cand_block, limit=10) if cand_block else []
-                ov = overlap_ratio(first_top, cand_top)
-                cand_status = _serp_status(candidate)
-                if _provider_resolve(candidate) == "resolved" and cand_status == "clean":
-                    result = candidate
-                    previous_top10 = first_top
-                    verification = {"status": "resolved_on_verify", "overlap": ov}
-                elif cand_block is None or not cand_top:
-                    verification = {"status": "verify_failed", "overlap": None}
+                verify_task["location_code"] = 2840 if location_code is None else location_code
+        step_est = _step_estimate(True)
+        verify_opts = dict(request_options)
+        affordable = True
+        if verify_opts.get("max_cost_usd") is not None:
+            remaining_max = round(_money(verify_opts["max_cost_usd"], "max_cost_usd") - spent_usd, 6)
+            if remaining_max < step_est:
+                affordable = False
+                budget_exhausted = True
+            else:
+                verify_opts["max_cost_usd"] = remaining_max
+                verify_opts["estimated_cost_usd"] = step_est
+        if not affordable:
+            second_pull_info = {"status": "failed", "reason": "max_cost_usd_insufficient_for_second_pull"}
+        else:
+            first_block = _serp_first_block(result)
+            first_top = organic_site_keys(first_block, limit=10) if first_block else []
+            candidate = _run(verify_task, verify_opts, "verify_no_swap")
+            spent_usd = round(spent_usd + _step_spend(candidate, step_est), 6)
+            attempt_ids.extend(attempts[-1]["task_ids"])
+            cand_block = _serp_first_block(candidate)
+            cand_top = organic_site_keys(cand_block, limit=10) if cand_block else []
+            ov = overlap_ratio(first_top, cand_top)
+            cand_status = _serp_status(candidate)
+            if cand_block is None or not cand_top:
+                second_pull_info = {"status": "verify_failed", "overlap": None}
+            else:
+                stable = ov is not None and ov > DECOY_THRESHOLDS["pull_overlap_max"]
+                if stable and cand_status == "clean":
+                    second_pull_info = {"status": "stable", "overlap": ov}
                 else:
-                    verify_top10 = cand_top
-                    stable = ov is not None and ov > DECOY_THRESHOLDS["pull_overlap_max"]
-                    if stable and cand_status == "clean":
-                        verification = {"status": "stable", "overlap": ov}
-                    else:
-                        verification = {"status": "unstable" if not stable else "verify_pull_suspect", "overlap": ov}
-                    for t in result.get("tasks") or []:
-                        if not isinstance(t, dict):
+                    second_pull_info = {
+                        "status": "unstable" if not stable else "verify_pull_suspect",
+                        "overlap": ov,
+                    }
+                for t in result.get("tasks") or []:
+                    if not isinstance(t, dict):
+                        continue
+                    t_data = t.get("data") if isinstance(t.get("data"), dict) else None
+                    for res_obj in t.get("result") or []:
+                        if not isinstance(res_obj, dict) or not isinstance(res_obj.get("serp_integrity"), dict):
                             continue
-                        t_data = t.get("data") if isinstance(t.get("data"), dict) else None
-                        for res_obj in t.get("result") or []:
-                            if not isinstance(res_obj, dict) or not isinstance(res_obj.get("serp_integrity"), dict):
-                                continue
-                            decoy = assess_decoy_signals(
-                                res_obj,
-                                task_data=t_data,
-                                second_pull_sites=cand_top,
-                                incumbent_sites=incumbent_sites,
-                            )
-                            if cand_status in _DECOY_STATUSES and not decoy.get("suspect"):
-                                decoy["suspect"] = True
-                                decoy["fired"] = list(decoy.get("fired") or []) + ["verify_pull_suspect"]
-                                decoy["reasons"] = list(decoy.get("reasons") or []) + [
-                                    f"Verification pull (resolve, no swap) was itself {cand_status}"
-                                ]
-                            apply_decoy_assessment(res_obj["serp_integrity"], decoy)
-                    attempts[-1]["status"] = _serp_status(result)
+                        decoy = assess_decoy_signals(
+                            res_obj,
+                            task_data=t_data,
+                            second_pull_sites=cand_top,
+                            incumbent_sites=incumbent_sites,
+                            independent_sites=ind_view["sites"] if (ind_view and ind_view.get("ok")) else None,
+                            maps_sites=effective_maps_sites,
+                            consensus_result=consensus,
+                        )
+                        if cand_status in _DECOY_STATUSES and not decoy.get("suspect"):
+                            decoy["suspect"] = True
+                            decoy["fired"] = list(decoy.get("fired") or []) + ["verify_pull_suspect"]
+                            decoy["reasons"] = list(decoy.get("reasons") or []) + [
+                                f"Verification pull (resolve, no swap) was itself {cand_status}"
+                            ]
+                        apply_decoy_assessment(res_obj["serp_integrity"], decoy)
+                attempts[-1]["status"] = _serp_status(result)
+
+    # Decide final Truth Gate verification status (and try AIO-corroborated independent repair if needed).
+    verification: dict[str, Any]
+    repaired_from_independent = False
+    if not attempts[-1]["resolve_poisoned_results"]:
+        verification = {"status": "resolve_off", "consensus_passed": False}
+    elif second_pull_info and second_pull_info.get("status") in ("failed", "verify_failed", "unstable", "verify_pull_suspect"):
+        verification = {
+            **second_pull_info,
+            "consensus_passed": False,
+            "provider": ind_view.get("provider") if ind_view else None,
+        }
+    elif not ind_view or not ind_view.get("ok"):
+        verification = {
+            "status": "independent_unavailable",
+            "consensus_passed": False,
+            "provider": ind_view.get("provider") if ind_view else "none",
+            "reason": (ind_view or {}).get("error") or "independent view unavailable",
+            "latency_ms": (ind_view or {}).get("latency_ms", 0.0),
+            "credits_estimated": (ind_view or {}).get("credits_estimated", 0),
+        }
+    elif consensus and consensus.get("passed") is True and _serp_status(result) == "clean":
+        verification = {
+            "status": "repaired_on_repull" if retries_used > 0 else "independent_consensus",
+            "consensus_passed": True,
+            "provider": ind_view.get("provider"),
+            "consensus": consensus,
+            "latency_ms": ind_view.get("latency_ms", 0.0),
+            "credits_estimated": ind_view.get("credits_estimated", 0),
+        }
+        if second_pull_info:
+            verification["second_pull"] = second_pull_info
+    else:
+        # Consensus disagreed or block is suspect: attempt AIO-corroborated repair from independent items.
+        first_blk = _serp_first_block(result)
+        repair = (
+            try_aio_corroborated_repair(first_blk, ind_view, thresholds=consensus_thresholds)
+            if first_blk is not None
+            else {"repaired": False, "reason": "no_result_block"}
+        )
+        if repair.get("repaired") and first_blk is not None:
+            repaired_from_independent = True
+            new_top10 = organic_site_keys(first_blk, limit=10)
+            new_cons = evaluate_independent_consensus(
+                new_top10,
+                ind_view["sites"],
+                from_web_count=0,
+                thresholds=consensus_thresholds,
+            )
+            t_data = None
+            for t in result.get("tasks") or []:
+                if isinstance(t, dict) and isinstance(t.get("data"), dict):
+                    t_data = t["data"]
+                    break
+            new_decoy = assess_decoy_signals(
+                first_blk,
+                task_data=t_data,
+                incumbent_sites=incumbent_sites,
+                independent_sites=ind_view["sites"],
+                maps_sites=effective_maps_sites,
+                consensus_result=new_cons,
+            )
+            integ = first_blk["serp_integrity"]
+            integ["status"] = "clean"
+            integ["reasons"] = []
+            integ["organic_count"] = len(new_top10)
+            integ["repaired_from_dfs_top10"] = repair["original_dfs_top10"]
+            integ["repair"] = repair
+            apply_decoy_assessment(integ, new_decoy)
+            consensus = new_cons
+            verification = {
+                "status": "repaired_from_independent",
+                "consensus_passed": bool(new_cons.get("passed")),
+                "provider": ind_view.get("provider"),
+                "consensus": new_cons,
+                "repair": repair,
+                "latency_ms": ind_view.get("latency_ms", 0.0),
+                "credits_estimated": ind_view.get("credits_estimated", 0),
+            }
+        else:
+            verification = {
+                "status": "consensus_disagreed",
+                "consensus_passed": False,
+                "provider": ind_view.get("provider"),
+                "consensus": consensus,
+                "repair_attempt": repair,
+                "reason": "; ".join((consensus or {}).get("reasons") or []) or "independent consensus disagreed",
+                "latency_ms": ind_view.get("latency_ms", 0.0),
+                "credits_estimated": ind_view.get("credits_estimated", 0),
+            }
 
     labs_items: list[dict[str, Any]] | None = None
     if labs_fallback and (
@@ -1045,8 +1268,11 @@ def _serp_impl(
             budget_exhausted=budget_exhausted,
         )
     final_status = _serp_status(result)
-    total_cost = sum(a["cost_usd"] for a in attempts if isinstance(a.get("cost_usd"), (int, float)))
-    total_latency = round(sum(a["latency_ms"] for a in attempts), 1)
+    maps_cost = float((maps_view or {}).get("cost_usd") or 0.0)
+    maps_lat = float((maps_view or {}).get("latency_ms") or 0.0)
+    ind_lat = float((ind_view or {}).get("latency_ms") or 0.0)
+    total_cost = sum(a["cost_usd"] for a in attempts if isinstance(a.get("cost_usd"), (int, float))) + maps_cost
+    total_latency = round(sum(a["latency_ms"] for a in attempts) + ind_lat + maps_lat, 1)
     repull_overlap = None
     if previous_top10 is not None and final_block is not None:
         current = organic_site_keys(final_block, limit=10)
@@ -1066,18 +1292,32 @@ def _serp_impl(
                 integrity["detected_status"] = "suspect_decoy"
                 integrity["status"] = "unverified_decoy"
         stamp_verified(integrity, verification=verification, unprotected=not attempts[-1]["resolve_poisoned_results"])
+        if repaired_from_independent and integrity.get("verified"):
+            integrity.pop("unresolved", None)
     blocks = _serp_integrities(result)
     verified = bool(blocks) and all(b.get("verified") is True for b in blocks)
+    verified_basis = blocks[0].get("verified_basis") if (verified and blocks) else None
     final_status = _serp_status(result) if blocks else "no_organic_result"
     result["legends_serp"] = {
         "resolve_poisoned_results_default": resolve,
         "integrity": "protected" if attempts[-1]["resolve_poisoned_results"] else "unprotected",
         "verified": verified,
+        "verified_basis": verified_basis,
         "verification": verification,
+        "truth_gate": {
+            "provider": (ind_view or {}).get("provider") or ("none" if not resolve else "firecrawl_search"),
+            "independent_ok": bool((ind_view or {}).get("ok")),
+            "consensus": consensus,
+            "repaired": bool(repaired_from_independent or (verified and retries_used > 0)),
+            "repaired_from_independent": repaired_from_independent,
+            "latency_ms": ind_lat,
+            "credits_estimated": int((ind_view or {}).get("credits_estimated") or 0),
+            "maps_check": maps_view,
+        },
         "attempts": attempts,
         "final_status": final_status,
         "cost_usd_total": round(total_cost, 6),
-        "cost_scope": "provider-reported cost of SERP attempts only (Labs/traffic calls excluded)",
+        "cost_scope": "provider-reported DataForSEO SERP/Maps cost (Firecrawl credits tracked in truth_gate.credits_estimated)",
         "latency_ms_total": total_latency,
         "budget_exhausted": budget_exhausted,
     }

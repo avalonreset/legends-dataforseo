@@ -74,6 +74,9 @@ status; polling and retry decisions belong to the caller.
 | `--no-resolve-poisoned` | UNPROTECTED. Send `resolve_poisoned_results: false` on `serp`. Refused unless `LEGENDS_DFS_ALLOW_POISONED=1`; results are stamped `integrity: unprotected`, `verified: false`. Resolve is mandatory since 0.1.12 (one extra SERP page per task). |
 | `--allow-unverified` | Print an unverified `serp` result instead of failing. By default an unverified SERP exits 2 with `UnverifiedSerpError` and the stamped response; use only to inspect it. |
 | `--verify-no-swap` | Add one verification pull on `serp` when resolve swapped nothing (`from_web = 0`); doubles cost on clean SERPs. Off by default. If `--max-cost-usd` cannot cover the second pull, verification is `failed` and the SERP fails closed. |
+| `--consensus-provider` | Independent SERP Truth Gate provider for `serp` (`firecrawl` default, or `none` which fails closed unless `--allow-unverified`). |
+| `--country` | Country code passed to the independent consensus search provider (default `US`). |
+| `--local-maps-check` | Optional DataForSEO Google Maps diagnostic cross-check for local-intent `serp` pulls (+$0.002). |
 | `--resolve-goto-urls` / `--no-resolve-goto-urls` | Force or omit `resolve_goto_urls` on `serp`. Default: sent when `--depth` is 10 or less (page-1 pulls, about 2-3 s), omitted for deeper rank tracking (redirect unwrapping can add about 40 s; domains still come from breadcrumb and `website_name`). |
 | `--labs-fallback` | Optional DataForSEO Labs competitor cross-verification for `serp` within cumulative `--max-cost-usd`. |
 | `--item-limit` | Maximum Lab items (`1..1000`) for `competitors` (default 20), `ranked-keywords` (default 100), and `relevant-pages` (default 100). |

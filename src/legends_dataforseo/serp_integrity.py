@@ -569,6 +569,10 @@ def _decoy_reason(name: str, sig: dict[str, Any]) -> str:
         return f"Top-10 site overlap vs an independent second pull is {sig.get('overlap')}"
     if name == "incumbent_mismatch":
         return f"Top-10 site overlap vs known incumbents is {sig.get('overlap')}"
+    if name == "independent_consensus":
+        reasons = sig.get("reasons") or []
+        detail = "; ".join(reasons) if reasons else f"jaccard={sig.get('jaccard')}"
+        return f"Independent provider consensus failed ({detail})"
     return name
 
 
@@ -583,12 +587,16 @@ def assess_decoy_signals(
     task_data: dict[str, Any] | None = None,
     second_pull_sites: list[str] | None = None,
     incumbent_sites: list[str] | None = None,
+    independent_sites: list[str] | None = None,
+    maps_sites: list[str] | None = None,
+    consensus_result: dict[str, Any] | None = None,
     thresholds: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Score decoy-SERP signals for one organic result block (offline; extra evidence optional).
 
     Signals: AI Overview reference overlap with organic top 20 (needs >= 3 cited sites),
-    second-pull top-10 overlap, and caller-known incumbents. Result age and Labs traffic were
+    second-pull top-10 overlap, caller-known incumbents, independent cross-provider consensus,
+    and optional local Google Maps diagnostic overlap. Result age and Labs traffic were
     tested on the 2026-11-20 bench and do not separate decoys, so they are not scored.
     """
     th = dict(DECOY_THRESHOLDS)
@@ -622,6 +630,45 @@ def assess_decoy_signals(
             ratio = overlap_ratio(top10, inc_keys) if top10 else 0.0
             signals["incumbent_mismatch"] = {"fired": ratio is not None and ratio <= th["incumbent_overlap_max"],
                                              "overlap": ratio, "threshold": th["incumbent_overlap_max"]}
+    if consensus_result is not None:
+        signals["independent_consensus"] = {
+            "fired": consensus_result.get("passed") is not True,
+            "mode": consensus_result.get("mode"),
+            "jaccard": consensus_result.get("jaccard"),
+            "rank1_match": consensus_result.get("rank1_match"),
+            "top3_overlap": consensus_result.get("top3_overlap"),
+            "top5_overlap": consensus_result.get("top5_overlap"),
+            "shared_count": consensus_result.get("shared_count"),
+            "reasons": list(consensus_result.get("reasons") or []),
+        }
+    elif independent_sites is not None and (top10 or organic):
+        from .truth_gate import evaluate_independent_consensus
+
+        cons = evaluate_independent_consensus(top10, list(independent_sites), from_web_count=from_web)
+        signals["independent_consensus"] = {
+            "fired": cons.get("passed") is not True,
+            "mode": cons.get("mode"),
+            "jaccard": cons.get("jaccard"),
+            "rank1_match": cons.get("rank1_match"),
+            "top3_overlap": cons.get("top3_overlap"),
+            "top5_overlap": cons.get("top5_overlap"),
+            "shared_count": cons.get("shared_count"),
+            "reasons": list(cons.get("reasons") or []),
+        }
+    if maps_sites is not None and top10:
+        maps_keys = [k for k in (site_key(s) for s in maps_sites) if k]
+        maps_set = set(maps_keys)
+        hits = sum(1 for k in top10 if k in maps_set)
+        # Informational local corroboration only (M1 proved directory-heavy clean local SERPs
+        # can have 0 Maps hits while partial local decoys can have 2-3 hits).
+        signals["local_maps_overlap"] = {
+            "fired": False,
+            "diagnostic": True,
+            "hits": hits,
+            "organic_count": len(top10),
+            "maps_count": len(maps_set),
+            "overlap": round(hits / max(1, len(top10)), 4),
+        }
 
     suspect, fired = _decide_decoy(signals, th)
     resolve_requested = bool(isinstance(task_data, dict) and task_data.get("resolve_poisoned_results") is True)
@@ -659,11 +706,23 @@ def apply_decoy_assessment(integrity: dict[str, Any], decoy: dict[str, Any]) -> 
     return integrity
 
 
-# Verification outcomes: a second pull that disagreed, a requested pull that did not complete,
-# and "no second pull requested" (the only states eligible for provider_clean_no_decoy_signals).
-_VERIFY_DISAGREED = frozenset({"unstable", "verify_pull_suspect", "disagreed"})
-_VERIFY_FAILED = frozenset({"failed", "verify_failed", "skipped_budget"})
-_VERIFY_NOT_RUN = frozenset({None, "not_run", "not_needed", "skipped_disabled"})
+# Truth Gate verification outcomes: provider-only signals (from_web > 0, from_web == 0, or
+# same-provider double-pull) are NEVER sufficient for verified=True on their own.
+VERIFIED_BASES = frozenset({"independent_consensus", "independent_consensus_repaired"})
+_CONSENSUS_PASSED_STATUSES = frozenset({
+    "independent_consensus",
+    "repaired_on_repull",
+    "repaired_from_independent",
+})
+_VERIFY_DISAGREED = frozenset({
+    "unstable", "verify_pull_suspect", "disagreed", "consensus_disagreed",
+})
+_VERIFY_FAILED = frozenset({
+    "failed", "verify_failed", "skipped_budget", "independent_unavailable",
+})
+_VERIFY_NOT_RUN = frozenset({
+    None, "not_run", "not_needed", "skipped_disabled", "stable", "resolved_on_verify",
+})
 
 
 def stamp_verified(
@@ -672,21 +731,24 @@ def stamp_verified(
     verification: dict[str, Any] | None = None,
     unprotected: bool = False,
 ) -> dict[str, Any]:
-    """Set serp_integrity.verified (fail closed) plus the signals and reasons behind it.
+    """Set serp_integrity.verified (fail closed) requiring independent cross-provider consensus.
 
-    Rejected (verified False) when the task was unprotected, the block is not clean, any decoy
-    signal fired, or a verification pull disagreed or failed (including a cap too small for the
-    requested second pull). Otherwise the basis is, in order:
-    - `provider_from_web`: the provider resolve swapped results in (`from_web` > 0);
-    - `double_pull_stable`: zero swaps, confirmed by a stable verification pull;
-    - `provider_clean_no_decoy_signals`: zero swaps, resolve_poisoned_results=true confirmed sent,
-      no second pull requested (single-pull serp(), raw live pulls, standard-queue task_get),
-      no decoy signal and no canary hit.
+    Rejected (verified False) when:
+    - the task was unprotected (resolve_poisoned_results not sent),
+    - organic_count == 0,
+    - serp_integrity.status != "clean",
+    - any decoy signal fired,
+    - independent consensus disagreed, failed, or was unavailable/not run.
+
+    Neither a provider-claimed swap (from_web > 0) nor from_web == 0 is sufficient on its own.
+    Only independent consensus grants verified=True, with verified_basis in:
+    - `independent_consensus`: DataForSEO result passed consensus against an independent source;
+    - `independent_consensus_repaired`: repaired via re-pull or AIO-corroborated independent source.
     """
     decoy = integrity.get("decoy") if isinstance(integrity.get("decoy"), dict) else {}
     status = integrity.get("status")
-    vstatus = (verification or {}).get("status")
-    provider = decoy.get("provider_resolve")
+    vdict = verification if isinstance(verification, dict) else {}
+    vstatus = vdict.get("status")
     reasons: list[str] = []
     if unprotected:
         reasons.append(f"unprotected: resolve_poisoned_results was not sent ({ALLOW_POISONED_ENV}=1)")
@@ -697,26 +759,32 @@ def stamp_verified(
     if decoy.get("suspect") or decoy.get("fired"):
         reasons.append("decoy signals fired: " + ", ".join(decoy.get("fired") or []))
     if vstatus in _VERIFY_DISAGREED:
-        reasons.append(f"verification pull disagreed (verification: {vstatus})")
-    if vstatus in _VERIFY_FAILED:
-        detail = (verification or {}).get("reason")
-        reasons.append(f"verification pull failed (verification: {vstatus}"
-                       + (f", {detail})" if detail else ")"))
+        detail = vdict.get("reason")
+        reasons.append(
+            f"independent verification disagreed (verification: {vstatus}"
+            + (f", {detail})" if detail else ")")
+        )
+    elif vstatus in _VERIFY_FAILED:
+        detail = vdict.get("reason")
+        reasons.append(
+            f"independent verification failed (verification: {vstatus}"
+            + (f", {detail})" if detail else ")")
+        )
+
     basis: str | None = None
     if not reasons:
-        if provider == "resolved":
-            basis = "provider_from_web"
-        elif vstatus == "stable":
-            basis = "double_pull_stable"
-        elif vstatus in _VERIFY_NOT_RUN:
-            # Not unprotected, so resolve was confirmed sent (by the client or the task data echo).
-            if integrity.get("canary_hits"):
-                reasons.append("canary hits without from_web swaps or a verification pull: "
-                               + ", ".join(integrity["canary_hits"]))
+        if vstatus in _CONSENSUS_PASSED_STATUSES and vdict.get("consensus_passed") is True:
+            if vstatus == "independent_consensus":
+                basis = "independent_consensus"
             else:
-                basis = "provider_clean_no_decoy_signals"
+                basis = "independent_consensus_repaired"
+        elif vstatus in _VERIFY_NOT_RUN:
+            reasons.append(
+                "no independent consensus verification (provider-only signals are not sufficient)"
+            )
         else:
-            reasons.append(f"no verification basis (verification: {vstatus})")
+            reasons.append(f"no independent verification basis (verification: {vstatus})")
+
     verified = not reasons and basis is not None
     integrity["integrity"] = "unprotected" if unprotected else "protected"
     integrity["verified"] = verified

@@ -15,6 +15,9 @@ serp(keyword, *, location_code=2840, location_name=None,
      device=None, os=None, max_poison_retries=2, labs_fallback=False,
      resolve_poisoned_results=None, incumbent_sites=None,
      verify_no_swap=False, allow_unverified=False, resolve_goto_urls=None,
+     consensus_provider="firecrawl", independent_sites=None,
+     independent_items=None, country="US", local_maps_check=False,
+     maps_sites=None, consensus_thresholds=None,
      **request_options) -> dict
 demand(keywords, *, location_code=2840, language_code="en",
        **request_options) -> dict
@@ -121,6 +124,10 @@ verification=None, resolve_sent=None)`, `resolve_poisoned_default()`,
 and `site_traffic(sites, *, location_code=2840,
 language_code="en", max_age_days=30, **request_options)` (paid Labs bulk
 traffic estimation, cached locally; informational, not a decoy signal).
+Independent SERP Truth Gate helpers: `TRUTH_GATE_THRESHOLDS`, `VERIFIED_BASES`,
+`evaluate_independent_consensus(dfs_sites, independent_sites, *, from_web_count=0, thresholds=None)`,
+`firecrawl_search_view(keyword, *, location_name=None, country="US", limit=10, timeout=30.0, api_key=None)`,
+`load_firecrawl_api_key()`, and `verify_serp_envelope(envelope, ...)`.
 
 ## Decoy SERP defense (0.1.12, fail closed)
 
@@ -204,22 +211,20 @@ stays `suspect_poisoned`, plus `unresolved = true`; it is never relabelled
 cost 0) is retried with 2 s, 5 s and 10 s backoff, and `serp()` holds a
 per-process lock per normalized keyword so same-keyword calls run one at a time.
 
-**Verified stamp.** `stamp_verified(integrity, *, verification=None,
-unprotected=False)` sets `serp_integrity.verified`, `integrity`
+**Verified stamp (Independent SERP Truth Gate).** `stamp_verified(integrity, *,
+verification=None, unprotected=False)` sets `serp_integrity.verified`, `integrity`
 (`protected`/`unprotected`), `verified_basis`, `signals_used` and
-`unverified_reasons` (and `unverified = true` when not verified). It rejects
-when the task was unprotected, `organic_count == 0` (such as unparsed
-`live/html` or `task_get/html` blocks), the block is not `clean`, any decoy signal
-fired, or a verification pull disagreed (`unstable`, `verify_pull_suspect`) or
-failed (`failed`, `verify_failed`). Otherwise `verified_basis` is
-`provider_from_web` (resolve swapped results in, `from_web > 0`),
-`double_pull_stable` (zero swaps confirmed by a `stable` verification pull) or
-`provider_clean_no_decoy_signals` (zero swaps, `resolve_poisoned_results`
-confirmed sent, no second pull requested, no decoy signal and no canary hit;
-this is the default single-pull `serp()`, raw live pulls and standard-queue
-`task_get`). `stamp_envelope_verified(envelope, *, verification=None,
-resolve_sent=None)` stamps every organic block of an envelope; raw
-`api_request` uses it with `verification = not_run`.
+`unverified_reasons` (and `unverified = true` when not verified). Provider-only
+signals (`from_web > 0`, `from_web == 0`, or same-provider double-pull stability)
+are never sufficient on their own. Only independent cross-provider consensus
+(`VERIFIED_BASES`: `independent_consensus` or `independent_consensus_repaired`)
+grants `verified = true`. Raw `api_request` organic pulls and queued `task_get`
+retrievals are stamped `verified = false` until verified with
+`verify_serp_envelope()`. `serp()` runs the Truth Gate automatically via
+`consensus_provider="firecrawl"` (stdlib HTTPS-only `/v2/search` using
+`FIRECRAWL_API_KEY` from the environment) or caller-supplied `independent_sites` /
+`independent_items`, re-pulling on disagreement and optionally repairing from an
+AIO-corroborated independent view before failing closed with `UnverifiedSerpError`.
 
 **Fail closed.** When the final SERP is not verified, `serp()` raises
 `UnverifiedSerpError` (an `ApiError` with the stamped envelope on `.response`

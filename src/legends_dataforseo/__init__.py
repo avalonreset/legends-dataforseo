@@ -14,6 +14,7 @@ from .output import response_summary, response_view
 from .serp_integrity import (
     ALLOW_POISONED_ENV,
     DECOY_THRESHOLDS,
+    VERIFIED_BASES,
     allow_poisoned,
     apply_decoy_assessment,
     assess_decoy_signals,
@@ -31,6 +32,13 @@ from .serp_integrity import (
     WEBSITE_NAME_PLATFORMS,
     website_name_target,
 )
+from .truth_gate import (
+    TRUTH_GATE_THRESHOLDS,
+    evaluate_independent_consensus,
+    firecrawl_search_view,
+    load_firecrawl_api_key,
+    verify_serp_envelope,
+)
 from .tasks import wait_task
 
 __all__ = [
@@ -43,9 +51,11 @@ __all__ = [
     "response_summary", "response_view", "wait_task",
     "assess_serp_integrity", "extract_breadcrumb_target", "is_goto_wrapped_url",
     "normalize_organic_item", "normalize_serp_envelope",
-    "DECOY_THRESHOLDS", "apply_decoy_assessment", "assess_decoy_signals", "organic_item_site_key", "organic_site_keys",
+    "DECOY_THRESHOLDS", "TRUTH_GATE_THRESHOLDS", "VERIFIED_BASES",
+    "apply_decoy_assessment", "assess_decoy_signals", "organic_item_site_key", "organic_site_keys",
     "overlap_ratio", "site_key", "resolve_poisoned_default", "site_traffic",
     "ALLOW_POISONED_ENV", "SERP_OPERATOR_COST_MULTIPLIER", "SERP_TIMEOUT_S", "UnverifiedSerpError", "allow_poisoned",
     "has_serp_cost_multiplier_operator",
     "stamp_envelope_verified", "stamp_verified", "WEBSITE_NAME_PLATFORMS", "website_name_target",
+    "evaluate_independent_consensus", "firecrawl_search_view", "load_firecrawl_api_key", "verify_serp_envelope",
 ]
